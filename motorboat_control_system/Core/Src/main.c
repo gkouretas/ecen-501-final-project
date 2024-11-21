@@ -22,17 +22,60 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <stdint.h>
+#include <stdbool.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
+typedef StaticTask_t osStaticThreadDef_t;
 /* USER CODE BEGIN PTD */
+typedef enum {
+	kBoatIdle = 0,
+	kBoatDriving = 1,
+	kBoatAnchored = 2,
+  kBoatError = 3
+} BoatState_t;
 
+typedef struct {
+  uint16_t direction; // 0 -> 65536 : Left -> Right
+  uint16_t speed;     // 0 -> 65536 : 0-100% speed
+} BoatCommand_t;
+
+typedef enum {
+  kDirectionCCW = -1,
+  kDirectionNull = 0,
+  kDirectionCW = +1,
+} Direction_t; // CCW (+), CW (-)
+
+typedef struct {
+  uint16_t duty_cycle; // 0 -> 65536
+  Direction_t direction;
+  bool is_alive; // 
+  // TODO: Timer handle?
+  // TODO: GPIO handle?
+} MotorState_t;
+
+typedef struct {
+  Direction_t direction;
+  uint16_t duty_cycle;
+} MotorStatus_t;
+
+#define NUM_MOTORBOAT_MOTORS 4
+#define NUM_SPARE_MOTORS     1
+
+typedef struct {
+  BoatState_t boat_state;
+  bool control_active;
+  bool collision_detected;
+  bool depth_exceeded;
+  bool anchor_lifted;
+  MotorStatus_t motor_statuses[NUM_MOTORBOAT_MOTORS];
+} SystemInformation_t;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define THREAD_FLAG_DRIVING 0x1
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -60,8 +103,74 @@ const osThreadAttr_t defaultTask_attributes = {
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
+/* Definitions for boatSMTask */
+osThreadId_t boatSMTaskHandle;
+uint32_t boatSMTaskBuffer[ 128 ];
+osStaticThreadDef_t boatSMTaskControlBlock;
+const osThreadAttr_t boatSMTask_attributes = {
+  .name = "boatSMTask",
+  .cb_mem = &boatSMTaskControlBlock,
+  .cb_size = sizeof(boatSMTaskControlBlock),
+  .stack_mem = &boatSMTaskBuffer[0],
+  .stack_size = sizeof(boatSMTaskBuffer),
+  .priority = (osPriority_t) osPriorityLow,
+};
+/* Definitions for depthDetectTask */
+osThreadId_t depthDetectTaskHandle;
+uint32_t depthDetectTaskBuffer[ 128 ];
+osStaticThreadDef_t depthDetectTaskControlBlock;
+const osThreadAttr_t depthDetectTask_attributes = {
+  .name = "depthDetectTask",
+  .cb_mem = &depthDetectTaskControlBlock,
+  .cb_size = sizeof(depthDetectTaskControlBlock),
+  .stack_mem = &depthDetectTaskBuffer[0],
+  .stack_size = sizeof(depthDetectTaskBuffer),
+  .priority = (osPriority_t) osPriorityLow,
+};
+/* Definitions for readMotorTask */
+osThreadId_t readMotorTaskHandle;
+uint32_t readMotorTaskBuffer[ 128 ];
+osStaticThreadDef_t readMotorTaskControlBlock;
+const osThreadAttr_t readMotorTask_attributes = {
+  .name = "readMotorTask",
+  .cb_mem = &readMotorTaskControlBlock,
+  .cb_size = sizeof(readMotorTaskControlBlock),
+  .stack_mem = &readMotorTaskBuffer[0],
+  .stack_size = sizeof(readMotorTaskBuffer),
+  .priority = (osPriority_t) osPriorityLow,
+};
+/* Definitions for sendDataTask */
+osThreadId_t sendDataTaskHandle;
+uint32_t sendDataTaskBuffer[ 128 ];
+osStaticThreadDef_t sendDataTaskControlBlock;
+const osThreadAttr_t sendDataTask_attributes = {
+  .name = "sendDataTask",
+  .cb_mem = &sendDataTaskControlBlock,
+  .cb_size = sizeof(sendDataTaskControlBlock),
+  .stack_mem = &sendDataTaskBuffer[0],
+  .stack_size = sizeof(sendDataTaskBuffer),
+  .priority = (osPriority_t) osPriorityLow,
+};
+/* Definitions for queueBoatCommand */
+osMessageQueueId_t queueBoatCommandHandle;
+const osMessageQueueAttr_t queueBoatCommand_attributes = {
+  .name = "queueBoatCommand"
+};
 /* USER CODE BEGIN PV */
-
+MotorState_t motor_states[NUM_MOTORBOAT_MOTORS + NUM_SPARE_MOTORS];
+static SystemInformation_t system_information = {
+  .anchor_lifted = false,
+  .boat_state = kBoatIdle,
+  .collision_detected = false,
+  .control_active = false,
+  .depth_exceeded = false,
+  .motor_statuses = {
+	  {.direction = kDirectionNull, .duty_cycle = 0},
+	  {.direction = kDirectionNull, .duty_cycle = 0},
+	  {.direction = kDirectionNull, .duty_cycle = 0},
+	  {.direction = kDirectionNull, .duty_cycle = 0}
+  }
+};
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -74,6 +183,10 @@ static void MX_SPI3_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_USB_OTG_FS_PCD_Init(void);
 void StartDefaultTask(void *argument);
+void StartTaskBoatSM(void *argument);
+void StartTaskDepthDetect(void *argument);
+void StartTaskReadMotorCommands(void *argument);
+void StartTaskSendData(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -138,6 +251,10 @@ int main(void)
   /* start timers, add new ones, ... */
   /* USER CODE END RTOS_TIMERS */
 
+  /* Create the queue(s) */
+  /* creation of queueBoatCommand */
+  queueBoatCommandHandle = osMessageQueueNew (1, sizeof(BoatCommand_t), &queueBoatCommand_attributes);
+
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
   /* USER CODE END RTOS_QUEUES */
@@ -145,6 +262,18 @@ int main(void)
   /* Create the thread(s) */
   /* creation of defaultTask */
   defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
+
+  /* creation of boatSMTask */
+  boatSMTaskHandle = osThreadNew(StartTaskBoatSM, NULL, &boatSMTask_attributes);
+
+  /* creation of depthDetectTask */
+  depthDetectTaskHandle = osThreadNew(StartTaskDepthDetect, NULL, &depthDetectTask_attributes);
+
+  /* creation of readMotorTask */
+  readMotorTaskHandle = osThreadNew(StartTaskReadMotorCommands, NULL, &readMotorTask_attributes);
+
+  /* creation of sendDataTask */
+  sendDataTaskHandle = osThreadNew(StartTaskSendData, NULL, &sendDataTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -678,6 +807,132 @@ void StartDefaultTask(void *argument)
     osDelay(1);
   }
   /* USER CODE END 5 */
+}
+
+/* USER CODE BEGIN Header_StartTaskBoatSM */
+/**
+* @brief Function implementing the boatSMTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartTaskBoatSM */
+void StartTaskBoatSM(void *argument)
+{
+  /* USER CODE BEGIN StartTaskBoatSM */
+
+  /* Infinite loop */
+  for(;;)
+  {
+    // TODO: maybe protect system information w/ mutex?
+    switch (system_information.boat_state)
+    {
+		case kBoatIdle:
+			// Stopped exit: User input applied (i.e. gas pedal)
+			if (system_information.control_active)
+			{
+				system_information.boat_state = kBoatDriving;
+				osThreadFlagsSet(readMotorTaskHandle, THREAD_FLAG_DRIVING);
+			}
+      break;
+    case kBoatDriving:
+      // Driving exit: User input removed
+      //               Collision detected or depth exceeded -> anchored
+      if (!system_information.control_active)
+      {
+        // Clear flags
+        osThreadFlagsSet(readMotorTaskHandle, 0x0);
+
+        // If no control is active, return to "idle" state
+        system_information.boat_state = kBoatIdle;
+      }
+      else if (system_information.collision_detected || system_information.depth_exceeded)
+      {
+        // Clear flags
+        osThreadFlagsSet(readMotorTaskHandle, 0x0);
+
+        // If an error occurs (i.e. collision detection or depth exceeded), 
+        system_information.boat_state = kBoatError;
+      }
+      break;
+    case kBoatAnchored:
+      if (system_information.anchor_lifted)
+      {
+        // Once the anchor is listed, we now move back to "idle" state
+        system_information.boat_state = kBoatIdle;
+      }
+      break;
+    case kBoatError:
+      if (!system_information.collision_detected && !system_information.depth_exceeded)
+      {
+        // If error conditions have cleared, return to "idle" state
+        system_information.boat_state = kBoatIdle;
+      }
+      break;
+    }
+  }
+  /* USER CODE END StartTaskBoatSM */
+}
+
+/* USER CODE BEGIN Header_StartTaskDepthDetect */
+/**
+* @brief Function implementing the depthDetectTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartTaskDepthDetect */
+void StartTaskDepthDetect(void *argument)
+{
+  /* USER CODE BEGIN StartTaskDepthDetect */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END StartTaskDepthDetect */
+}
+
+/* USER CODE BEGIN Header_StartTaskReadMotorCommands */
+/**
+* @brief Function implementing the readMotorTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartTaskReadMotorCommands */
+void StartTaskReadMotorCommands(void *argument)
+{
+  /* USER CODE BEGIN StartTaskReadMotorCommands */
+  BoatCommand_t command;
+  /* Infinite loop */
+  for(;;)
+  {
+    // Wait for flags to clear
+    osThreadFlagsWait(THREAD_FLAG_DRIVING, osFlagsNoClear, osWaitForever);
+    if (osMessageQueueGet(queueBoatCommandHandle, (void *)&command, NULL, osWaitForever) == osOK)
+    {
+      // TODO: where will this queue get filled from?
+      // TODO: diff drive PWM command
+    }
+  }
+  /* USER CODE END StartTaskReadMotorCommands */
+}
+
+/* USER CODE BEGIN Header_StartTaskSendData */
+/**
+* @brief Function implementing the sendDataTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartTaskSendData */
+void StartTaskSendData(void *argument)
+{
+  /* USER CODE BEGIN StartTaskSendData */
+  /* Infinite loop */
+  for(;;)
+  {
+    // TODO: broadcast info over 
+    osDelay(1);
+  }
+  /* USER CODE END StartTaskSendData */
 }
 
 /**
