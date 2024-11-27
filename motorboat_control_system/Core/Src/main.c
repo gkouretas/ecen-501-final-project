@@ -28,6 +28,8 @@
 
 /* Private typedef -----------------------------------------------------------*/
 typedef StaticTask_t osStaticThreadDef_t;
+typedef StaticTimer_t osStaticTimerDef_t;
+typedef StaticSemaphore_t osStaticMutexDef_t;
 /* USER CODE BEGIN PTD */
 typedef enum {
 	kBoatIdle = 0,
@@ -60,7 +62,7 @@ typedef struct {
   uint16_t duty_cycle;
 } MotorStatus_t;
 
-#define NUM_MOTORBOAT_MOTORS 4
+#define NUM_MOTORS 4
 #define NUM_SPARE_MOTORS     1
 
 typedef struct {
@@ -69,7 +71,7 @@ typedef struct {
   bool collision_detected;
   bool depth_exceeded;
   bool anchor_lifted;
-  MotorStatus_t motor_statuses[NUM_MOTORBOAT_MOTORS];
+  MotorStatus_t motor_statuses[NUM_MOTORS];
 } SystemInformation_t;
 /* USER CODE END PTD */
 
@@ -80,7 +82,9 @@ typedef struct {
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-
+// Convert convert 16-bit duty cycle value to correct timer CRR using PWM frequency
+#define DUTY_TO_CCR(duty_cycle_16bit) \
+    (((uint32_t)(duty_cycle_16bit) * TIM1_ARR) / 65535)
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
@@ -91,6 +95,10 @@ I2C_HandleTypeDef hi2c2;
 QSPI_HandleTypeDef hqspi;
 
 SPI_HandleTypeDef hspi3;
+
+TIM_HandleTypeDef htim1;
+TIM_HandleTypeDef htim2;
+DMA_HandleTypeDef hdma_tim1_ch1;
 
 UART_HandleTypeDef huart1;
 
@@ -156,14 +164,42 @@ osMessageQueueId_t queueBoatCommandHandle;
 const osMessageQueueAttr_t queueBoatCommand_attributes = {
   .name = "queueBoatCommand"
 };
+/* Definitions for timerMotorTimeout */
+osTimerId_t timerMotorTimeoutHandle;
+osStaticTimerDef_t motorTimerControlBlock;
+const osTimerAttr_t timerMotorTimeout_attributes = {
+  .name = "timerMotorTimeout",
+  .cb_mem = &motorTimerControlBlock,
+  .cb_size = sizeof(motorTimerControlBlock),
+};
+/* Definitions for timerSensorRead */
+osTimerId_t timerSensorReadHandle;
+osStaticTimerDef_t timerSensorReadControlBlock;
+const osTimerAttr_t timerSensorRead_attributes = {
+  .name = "timerSensorRead",
+  .cb_mem = &timerSensorReadControlBlock,
+  .cb_size = sizeof(timerSensorReadControlBlock),
+};
+/* Definitions for mutexSystemInfo */
+osMutexId_t mutexSystemInfoHandle;
+osStaticMutexDef_t mutexSystemInfoControlBlock;
+const osMutexAttr_t mutexSystemInfo_attributes = {
+  .name = "mutexSystemInfo",
+  .cb_mem = &mutexSystemInfoControlBlock,
+  .cb_size = sizeof(mutexSystemInfoControlBlock),
+};
 /* USER CODE BEGIN PV */
-MotorState_t motor_states[NUM_MOTORBOAT_MOTORS + NUM_SPARE_MOTORS];
+uint32_t dma_buffer [NUM_MOTORS];
+
+MotorState_t motor_states[NUM_MOTORS + NUM_SPARE_MOTORS];
+
 static SystemInformation_t system_information = {
   .anchor_lifted = false,
   .boat_state = kBoatIdle,
   .collision_detected = false,
   .control_active = false,
   .depth_exceeded = false,
+  // should this include the status of the spare? How should we handle that? Do we just remap GPIO to switch motor?
   .motor_statuses = {
 	  {.direction = kDirectionNull, .duty_cycle = 0},
 	  {.direction = kDirectionNull, .duty_cycle = 0},
@@ -176,19 +212,26 @@ static SystemInformation_t system_information = {
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
 static void MX_DFSDM1_Init(void);
 static void MX_I2C2_Init(void);
 static void MX_QUADSPI_Init(void);
 static void MX_SPI3_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_USB_OTG_FS_PCD_Init(void);
+static void MX_TIM1_Init(void);
+static void MX_TIM2_Init(void);
 void StartDefaultTask(void *argument);
 void StartTaskBoatSM(void *argument);
 void StartTaskDepthDetect(void *argument);
 void StartTaskReadMotorCommands(void *argument);
 void StartTaskSendData(void *argument);
+void callbackMotorTimeout(void *argument);
+void callbackSensorRead(void *argument);
 
 /* USER CODE BEGIN PFP */
+void initMotorStates(void);
+void initMotorPWM(void);
 
 /* USER CODE END PFP */
 
@@ -226,18 +269,24 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_DFSDM1_Init();
   MX_I2C2_Init();
   MX_QUADSPI_Init();
   MX_SPI3_Init();
   MX_USART1_UART_Init();
   MX_USB_OTG_FS_PCD_Init();
+  MX_TIM1_Init();
+  MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
 
   /* USER CODE END 2 */
 
   /* Init scheduler */
   osKernelInitialize();
+  /* Create the mutex(es) */
+  /* creation of mutexSystemInfo */
+  mutexSystemInfoHandle = osMutexNew(&mutexSystemInfo_attributes);
 
   /* USER CODE BEGIN RTOS_MUTEX */
   /* add mutexes, ... */
@@ -246,6 +295,13 @@ int main(void)
   /* USER CODE BEGIN RTOS_SEMAPHORES */
   /* add semaphores, ... */
   /* USER CODE END RTOS_SEMAPHORES */
+
+  /* Create the timer(s) */
+  /* creation of timerMotorTimeout */
+  timerMotorTimeoutHandle = osTimerNew(callbackMotorTimeout, osTimerPeriodic, NULL, &timerMotorTimeout_attributes);
+
+  /* creation of timerSensorRead */
+  timerSensorReadHandle = osTimerNew(callbackSensorRead, osTimerPeriodic, NULL, &timerSensorRead_attributes);
 
   /* USER CODE BEGIN RTOS_TIMERS */
   /* start timers, add new ones, ... */
@@ -519,6 +575,143 @@ static void MX_SPI3_Init(void)
 }
 
 /**
+  * @brief TIM1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM1_Init(void)
+{
+
+  /* USER CODE BEGIN TIM1_Init 0 */
+
+  /* USER CODE END TIM1_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
+  TIM_BreakDeadTimeConfigTypeDef sBreakDeadTimeConfig = {0};
+
+  /* USER CODE BEGIN TIM1_Init 1 */
+
+  /* USER CODE END TIM1_Init 1 */
+  htim1.Instance = TIM1;
+  htim1.Init.Prescaler = TIM1_PSC;
+  htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim1.Init.Period = TIM1_ARR;
+  htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim1.Init.RepetitionCounter = 0;
+  htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim1, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_Init(&htim1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterOutputTrigger2 = TIM_TRGO2_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim1, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
+  sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
+  if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_4) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sBreakDeadTimeConfig.OffStateRunMode = TIM_OSSR_DISABLE;
+  sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
+  sBreakDeadTimeConfig.LockLevel = TIM_LOCKLEVEL_OFF;
+  sBreakDeadTimeConfig.DeadTime = 0;
+  sBreakDeadTimeConfig.BreakState = TIM_BREAK_DISABLE;
+  sBreakDeadTimeConfig.BreakPolarity = TIM_BREAKPOLARITY_HIGH;
+  sBreakDeadTimeConfig.BreakFilter = 0;
+  sBreakDeadTimeConfig.Break2State = TIM_BREAK2_DISABLE;
+  sBreakDeadTimeConfig.Break2Polarity = TIM_BREAK2POLARITY_HIGH;
+  sBreakDeadTimeConfig.Break2Filter = 0;
+  sBreakDeadTimeConfig.AutomaticOutput = TIM_AUTOMATICOUTPUT_DISABLE;
+  if (HAL_TIMEx_ConfigBreakDeadTime(&htim1, &sBreakDeadTimeConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM1_Init 2 */
+
+  /* USER CODE END TIM1_Init 2 */
+
+}
+
+/**
+  * @brief TIM2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM2_Init(void)
+{
+
+  /* USER CODE BEGIN TIM2_Init 0 */
+
+  /* USER CODE END TIM2_Init 0 */
+
+  TIM_SlaveConfigTypeDef sSlaveConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM2_Init 1 */
+
+  /* USER CODE END TIM2_Init 1 */
+  htim2.Instance = TIM2;
+  htim2.Init.Prescaler = 0;
+  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim2.Init.Period = 4294967295;
+  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sSlaveConfig.SlaveMode = TIM_SLAVEMODE_DISABLE;
+  sSlaveConfig.InputTrigger = TIM_TS_ITR0;
+  if (HAL_TIM_SlaveConfigSynchro(&htim2, &sSlaveConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM2_Init 2 */
+
+  /* USER CODE END TIM2_Init 2 */
+
+}
+
+/**
   * @brief USART1 Initialization Function
   * @param None
   * @retval None
@@ -585,6 +778,22 @@ static void MX_USB_OTG_FS_PCD_Init(void)
   /* USER CODE BEGIN USB_OTG_FS_Init 2 */
 
   /* USER CODE END USB_OTG_FS_Init 2 */
+
+}
+
+/**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA1_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA1_Channel2_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel2_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel2_IRQn);
 
 }
 
@@ -672,14 +881,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : ARD_D4_Pin */
-  GPIO_InitStruct.Pin = ARD_D4_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.Alternate = GPIO_AF1_TIM2;
-  HAL_GPIO_Init(ARD_D4_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : ARD_D7_Pin */
   GPIO_InitStruct.Pin = ARD_D7_Pin;
@@ -788,6 +989,36 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+void initMotorStates(void)
+{
+	for (int i = 0; i<NUM_MOTORS; i++)
+	{
+		motor_states[i]->direction = system_information->motor_statuses[i].direction;
+		motor_states[i]->duty_cycle = system_information->motor_statuses[i].duty_cycle;
+	}
+}
+
+// Use motor state to initialize PWM and start DMA for duty cycle updates
+void initMotorPWM(void)
+{
+	// Initialize PWM duty cycles
+	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
+	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 0);
+	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, 0);
+	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, 0);
+
+	// Start PWM on all channels
+	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
+	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
+	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_4);
+
+	// Start DMA transfer
+    HAL_DMA_Start(&hdma_tim1_ch1, (uint32_t)dma_buffer, (uint32_t)&htim1.Instance->CCR1, NUM_MOTORS);
+
+    // Enable DMA for timer update event
+    __HAL_TIM_ENABLE_DMA(&htim1, TIM_DMA_UPDATE);
+}
 
 /* USER CODE END 4 */
 
@@ -933,6 +1164,22 @@ void StartTaskSendData(void *argument)
     osDelay(1);
   }
   /* USER CODE END StartTaskSendData */
+}
+
+/* callbackMotorTimeout function */
+void callbackMotorTimeout(void *argument)
+{
+  /* USER CODE BEGIN callbackMotorTimeout */
+
+  /* USER CODE END callbackMotorTimeout */
+}
+
+/* callbackSensorRead function */
+void callbackSensorRead(void *argument)
+{
+  /* USER CODE BEGIN callbackSensorRead */
+
+  /* USER CODE END callbackSensorRead */
 }
 
 /**
