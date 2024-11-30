@@ -22,15 +22,13 @@ class BoatController:
         self._x = 0.0
         self._y = 0.0
         self._velocity = 0.0
+        self._delta = 0.0
         
         self._heading = 0.0 
         self._steering = 0.0
         
         self._depth = 1.0
-        
-        self._cntrl_dx = 0.0
-        self._cntrl_dy = 0.0
-        
+                        
     @property
     def depth(self):
         return self._depth
@@ -41,51 +39,43 @@ class BoatController:
         
     def run_kinematics(self):
         self._apply_commands()
-        
-        # self._heading = 0.0
-
-        # self._heading = self._m1.position
-        self._heading = np.arctan2(self._cntrl_dy, self._cntrl_dx)
+    
+        # Motor space -> "joint" space
+        self._delta    = self._m1.velocity / 10
         self._velocity = self._kv * (self._m2.velocity + self._m3.velocity)
+
+        # Compute kinematics
+        self._dx = (self._velocity * np.cos(np.pi/2 + self._heading)) * self._dt
+        self._dy = (self._velocity * np.sin(np.pi/2 + self._heading)) * self._dt
+        # self._do = ((self._velocity / self._L) * np.tan(self._delta)) * self._dt
+        # self._do = ((self._velocity / self._L) * np.tan(self._delta)) * self._dt
+        self._do = self._delta * self._dt
+
         
-        self._dx = self._velocity * np.cos(self._heading)
-        self._dy = self._velocity * np.sin(self._heading)
-        self._do = (self._velocity / self._L) * np.tan(self._heading)
+        # Discrete differentiation -> map velocities to position/orientation
+        self._x += self._dx
+        self._y += self._dy
+        self._heading += self._do
         
-        self._x += self._dx * self._dt
-        self._y += self._dy * self._dt
-        self._heading += self._do * self._dt
-        
-        # self._heading = 0.0
-        # self._do = 0.0
-        
-    def transmit_commands(self, dx: float, dy: float):
+    def transmit_commands(self, dx: float, dy: float, dz: int):
         # IK, get direction and magnitude
         _do = np.arctan2(dy, dx)
-        _v = (dx**2 + dy**2)**(0.5)
-        self._cntrl_dx = dx
-        self._cntrl_dy = dy
+        _v = dz / 100
         
+        if abs(dx) < 1e-5: 
+            _do = 0.0
+        else:
+            _do = np.sign(dy) * (_do - (np.sign(dy) * np.pi/2))
+                    
         # TODO: transmit over BLE.
         # For now, let's simply apply commands
         # We assume dx and dy to be normalized here (0, 1)
         # and our max voltage to be 24
-        self._v1 = (_do / np.pi/2) * 24
+        self._v1 = (_do / (np.pi/2)) * 24
         self._v2 = _v * 24
         self._v3 = _v * 24
+        
         # self._apply_commands()
-        
-    @property
-    def T(self):
-        _R = self.R
-        _t = self.t
-        
-        return np.array([
-            [_R[0,0], _R[0,1], _R[0,2], _t[0]],
-            [_R[1,0], _R[1,1], _R[1,2], _t[1]],
-            [_R[2,0], _R[2,1], _R[2,2], _t[2]],
-            [0, 0, 0, 1]
-        ])
         
     @property
     def R(self):
@@ -126,16 +116,16 @@ class BoatController:
     @property
     def R(self):
         return np.array([
-            [np.cos(-self._heading), -np.sin(-self._heading), 0.0],
-            [np.sin(-self._heading), np.cos(-self._heading), 0.0],
+            [np.cos(self._heading), -np.sin(self._heading), 0.0],
+            [np.sin(self._heading), np.cos(self._heading), 0.0],
             [0.0, 0.0, 1.0]
         ])
 
     @property
     def dR(self):
         return np.array([
-            [np.cos(-self._do), -np.sin(-self._do), 0.0],
-            [np.sin(-self._do), np.cos(-self._do), 0.0],
+            [np.cos(self._do), -np.sin(self._do), 0.0],
+            [np.sin(self._do), np.cos(self._do), 0.0],
             [0.0, 0.0, 1.0]
         ])
         
@@ -166,7 +156,11 @@ class BoatController:
     @property
     def dy(self):
         return self._dy
-        
+    
+    @property
+    def delta(self):
+        return np.degrees(self._delta)
+    
     def _apply_commands(self):
         self._m1.sim(self._v1)
         self._m2.sim(self._v2)

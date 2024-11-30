@@ -33,8 +33,10 @@ class BoatVisualizerScene(GLViewWidget):
         self._boat_mesh_item = self._init_boat_mesh()
         self._water_mesh_item = self._init_water_mesh()
         self._timer: QTimer = None
+        
+        self._home_tform = Transform3D(*(np.linalg.inv(boat_to_gl_transformation).flatten()))
                 
-        self._boat_mesh_item.setTransform(Transform3D(*(np.linalg.inv(boat_to_gl_transformation).flatten())))
+        self._boat_mesh_item.setTransform(self._home_tform)
         self.setBackgroundColor(self._BACKGROUND_COLOR)
         
         self.addItem(self._boat_mesh_item)
@@ -95,6 +97,7 @@ class BoatVisualizerScene(GLViewWidget):
         painter.drawText(15, 15, f"Orientation: {self._controller.heading:.3f} deg")
         painter.drawText(15, 25, f"X: {self._controller.x:.3f} mm")
         painter.drawText(15, 35, f"Y: {self._controller.y:.3f} mm")
+        painter.drawText(15, 45, f"Delta: {self._controller._delta:.3f} deg")
         
         # End painter
         painter.end()
@@ -113,7 +116,9 @@ class BoatVisualizerScene(GLViewWidget):
     def refresh(self):
         # TODO: get BLE packet and set boat translation + water depth accordingly...
         self._controller.run_kinematics()
-        self._boat_mesh_item.applyTransform(Transform3D(*self._controller.dT.flatten()), local = False)
+        self._boat_mesh_item.setTransform(self._home_tform)
+        self._boat_mesh_item.translate(dx = self._controller.x, dy = self._controller.y, dz = 0.0, local = False)
+        self._boat_mesh_item.rotate(angle = self._controller.heading, x = 0, y = 0, z = 1, local = True)
         
         # self._boat_mesh_item.rotate(self._controller.dh, 0, 0, 1, local = True)
         # self._boat_mesh_item.translate(self._controller.dy, -self._controller.dx, 0, local = False)
