@@ -2,7 +2,7 @@ from PyQt5.QtGui import *
 from PyQt5.QtCore import *
 from PyQt5.QtWidgets import *
 
-from joystick import JoystickWidget
+from joystick_interface import JoystickWidget
 from speed_interface import SpeedBar
 
 from typing import Callable
