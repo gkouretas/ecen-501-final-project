@@ -4,7 +4,7 @@ import numpy as np
 from boat_scene import BoatVisualizerScene
 from boat_controller import BoatController
 from motor_model import Motor
-from joystick import JoystickWidget
+from control_interface import ControlInterface
 
 # Parameters used from https://ctms.engin.umich.edu/CTMS/index.php?example=MotorSpeed&section=SystemModeling
 _motor_params = {
@@ -35,8 +35,8 @@ def main():
     view = BoatVisualizerScene(controller, b2gl_T)
     view.run()
     
-    joystick = JoystickWidget(joystick_callback = controller.transmit_commands)
-    joystick.show()
+    control = ControlInterface(control_callback = controller.transmit_commands)
+    control.show()
     
     app.exec_()
 

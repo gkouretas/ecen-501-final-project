@@ -12,21 +12,13 @@ class JoystickWidget(QWidget):
     """
     Created based on https://stackoverflow.com/questions/55876713/how-to-create-a-joystick-controller-widget-in-pyqt
     """
-    def __init__(self, joystick_callback: Callable[[float, float, int], None] = None, max_input: int = 100) -> None:
+    def __init__(self) -> None:
         super().__init__()
         self._joystick_position = QPointF(0.0, 0.0)
-        self._joystick_callback = joystick_callback
         self._current_position: QRectF
         self._is_active: bool = False
         self._timer: QTimer = None
         self._input: int = 0
-        self._max_input = max_input
-        
-        if joystick_callback is not None:
-            self._timer = QTimer()
-            self._timer.timeout.connect(self._transmit_commands)
-            self._timer.setInterval(33)
-            self._timer.start()
         
         self.update_joystick()
         
@@ -83,19 +75,6 @@ class JoystickWidget(QWidget):
     def euclidian_dist(self, p1: QPoint, p2: QPoint):
         return ((p1.x() - p2.x())**2 + (p1.y() - p2.y()) ** 2) ** 0.5
     
-    def keyPressEvent(self, evt):
-        key = evt.key()
-        if key == Qt.Key_Space:
-            self._input = max(self._input + 1, self._max_input)
-        return super().keyPressEvent(evt)
-    
-    def keyReleaseEvent(self, evt):
-        if evt.isAutoRepeat(): return
-        key = evt.key()
-        if key == Qt.Key_Space:
-            self._input = 0
-        return super().keyReleaseEvent(evt)
-
     @property
     def perimeter_radius(self) -> float:
         return self.width() / 3
