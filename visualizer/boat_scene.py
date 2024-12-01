@@ -22,7 +22,8 @@ from boat_controller import BoatController
 class BoatVisualizerScene(GLViewWidget):
     _MOTORBOAT_MESH_PATH = "visualizer/models/3DBenchy.stl"
     _WATER_RADIUS = 1000.0 # [mm]
-    _BOAT_COLOR = (108/255, 64/255, 152/255, 1)
+    _BOAT_COLOR = (0/255, 80/255, 0/255, 1)
+
     _BACKGROUND_COLOR = (177, 181, 236)
 
     def __init__(self, controller: BoatController, boat_to_gl_transformation: NDArray):
@@ -133,7 +134,7 @@ class BoatVisualizerScene(GLViewWidget):
     def run(self):
         self._timer = QTimer()
         self._timer.timeout.connect(self.refresh)
-        self._timer.setInterval(int(self._controller.update_rate))
+        self._timer.setInterval(int(self._controller.update_rate * 1000))
         self._timer.start()
                 
     def update_view(self):
@@ -145,15 +146,7 @@ class BoatVisualizerScene(GLViewWidget):
         self._boat_mesh_item.setTransform(self._home_tform)
         self._boat_mesh_item.translate(dx = self._controller.x, dy = self._controller.y, dz = 0.0, local = False)
         self._boat_mesh_item.rotate(angle = self._controller.heading, x = 0, y = 0, z = 1, local = True)
-        
-        if self._follow:
-            self.setCameraParams(**self.follow_camera_params())
-        
-        # self._boat_mesh_item.rotate(self._controller.dh, 0, 0, 1, local = True)
-        # self._boat_mesh_item.translate(self._controller.dy, -self._controller.dx, 0, local = False)
-        # self._boat_mesh_item.translate(self._controller.dx, 0, 0, local = False)
-        # print(gl_trans_rel.flatten())
-        
+                        
         self.update()
         
     def keyPressEvent(self, ev):

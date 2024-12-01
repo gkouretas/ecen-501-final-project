@@ -2,14 +2,13 @@ import numpy as np
 from motor_model import Motor
 
 class BoatController:
-    def __init__(self, motor_params: Motor.Params, update_rate: float, L: float):
+    def __init__(self, motor_params: Motor.Params, update_rate: float):
         self._m1 = Motor(motor_params, update_rate)
         self._m2 = Motor(motor_params, update_rate)
         self._m3 = Motor(motor_params, update_rate)
         self._m4 = Motor(motor_params, update_rate)
         
         self._dt = update_rate
-        self._L = L
         
         self._v1 = 0.0
         self._v2 = 0.0
@@ -27,7 +26,7 @@ class BoatController:
         self._heading = 0.0 
         self._steering = 0.0
         
-        self._depth = 1.0
+        self._depth = 0.0
                         
     @property
     def depth(self):
