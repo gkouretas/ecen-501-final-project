@@ -10,9 +10,6 @@ from typing import Callable
 class ControlInterface(QWidget):
     def __init__(self, control_callback: Callable[[float, float, int], None] = None):
         super().__init__()
-        self.setMinimumSize(400, 400)
-
-
         
         self._joystick_widget = JoystickWidget()
         self._speed_bar = SpeedBar()

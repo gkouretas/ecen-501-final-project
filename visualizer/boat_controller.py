@@ -41,17 +41,14 @@ class BoatController:
         self._apply_commands()
     
         # Motor space -> "joint" space
-        self._delta    = self._m1.velocity / 10
+        self._delta    = self._m1.velocity
         self._velocity = self._kv * (self._m2.velocity + self._m3.velocity)
 
         # Compute kinematics
         self._dx = (self._velocity * np.cos(np.pi/2 + self._heading)) * self._dt
         self._dy = (self._velocity * np.sin(np.pi/2 + self._heading)) * self._dt
-        # self._do = ((self._velocity / self._L) * np.tan(self._delta)) * self._dt
-        # self._do = ((self._velocity / self._L) * np.tan(self._delta)) * self._dt
         self._do = self._delta * self._dt
 
-        
         # Discrete differentiation -> map velocities to position/orientation
         self._x += self._dx
         self._y += self._dy
@@ -71,7 +68,7 @@ class BoatController:
         # For now, let's simply apply commands
         # We assume dx and dy to be normalized here (0, 1)
         # and our max voltage to be 24
-        self._v1 = (_do / (np.pi/2)) * 24
+        self._v1 = (_do / (np.pi/2)) * 24 # Normalize to (0, Vmax)
         self._v2 = _v * 24
         self._v3 = _v * 24
         
@@ -160,6 +157,10 @@ class BoatController:
     @property
     def delta(self):
         return np.degrees(self._delta)
+    
+    @property
+    def velocity(self):
+        return self._velocity
     
     def _apply_commands(self):
         self._m1.sim(self._v1)

@@ -5,20 +5,19 @@ from boat_scene import BoatVisualizerScene
 from boat_controller import BoatController
 from motor_model import Motor
 from control_interface import ControlInterface
+from boat_gui import BoatGUI
 
 # Parameters used from https://ctms.engin.umich.edu/CTMS/index.php?example=MotorSpeed&section=SystemModeling
 _motor_params = {
     "R": 1.0,
     "L": 0.5,
     "J": 0.01,
-    "b": 0.1,
+    # "b": 0.1,
+    "b": 0.25,
     "K": 0.01
 }
 
-def main():
-    from PyQt5.QtWidgets import QApplication
-    app = QApplication(sys.argv)
-    
+def main():    
     controller = BoatController(
         motor_params = Motor.Params(**_motor_params),
         update_rate = 1 / 30.0,
@@ -32,13 +31,15 @@ def main():
         [ 0, 0, 0, 1]
     ])
     
-    view = BoatVisualizerScene(controller, b2gl_T)
-    view.run()
+    # view = BoatVisualizerScene(controller, b2gl_T)
+    # view.run()
     
-    control = ControlInterface(control_callback = controller.transmit_commands)
-    control.show()
+    # control = ControlInterface(control_callback = controller.transmit_commands)
+    # control.show()
+    gui = BoatGUI(controller, b2gl_T)
+    gui.run()
     
-    app.exec_()
+    # app.exec_()
 
 if __name__ == "__main__":
     main()

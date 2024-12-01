@@ -2,6 +2,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from stl import mesh
+
 from pyqtgraph.opengl import (
     GLViewWidget, MeshData, GLMeshItem
 )
@@ -28,7 +29,6 @@ class BoatVisualizerScene(GLViewWidget):
         super().__init__()
         
         self._controller = controller
-        self._counter = 0
         
         self._boat_mesh_item = self._init_boat_mesh()
         self._water_mesh_item = self._init_water_mesh()
@@ -38,6 +38,7 @@ class BoatVisualizerScene(GLViewWidget):
                 
         self._boat_mesh_item.setTransform(self._home_tform)
         self.setBackgroundColor(self._BACKGROUND_COLOR)
+        self.setCameraParams(**self.home_camera_params())
         
         self.addItem(self._boat_mesh_item)
         self.addItem(self._water_mesh_item)
@@ -63,7 +64,9 @@ class BoatVisualizerScene(GLViewWidget):
             length = -self._controller.depth,
         )
         
-        _circle = np.array([np.cos(np.linspace(0, 2*np.pi, num = 25)), np.sin(np.linspace(0, 2*np.pi, num = 25)), np.zeros(25)]).T
+        _circle = np.array(
+            [np.cos(np.linspace(0, 2*np.pi, num = 25)), np.sin(np.linspace(0, 2*np.pi, num = 25)), np.zeros(25)]
+        ).T
                 
         _meshdata.setVertexes(
             np.concatenate((_circle, _meshdata.vertexes()))
@@ -82,22 +85,47 @@ class BoatVisualizerScene(GLViewWidget):
 
         return _mesh
     
+    def home_camera_params(self):
+        return {
+            "center": QVector3D(self._controller.x, self._controller.y, 0.0),
+            "distance": 250.0,
+            "elevation": 90.0,
+            "azimuth": -90.0
+        }
+
+    def isometric_camera_params(self):
+        return {
+            "center": QVector3D(self._controller.x, self._controller.y, 0.0),
+            "distance": 250.0,
+            "elevation": 5.0,
+            "azimuth": 135.0 + self._controller.heading
+        }
+        
+    def depth_camera_params(self):
+        return {
+            "center": QVector3D(self._controller.x, self._controller.y, 0.0),
+            "distance": self._WATER_RADIUS,
+            "elevation": 0.0,
+            "azimuth": 180.0 + self._controller.heading
+        }
+    
     def paintEvent(self, event):
         super().paintEvent(event)
 
         # Create a QPainter to overlay text
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         
         # Set font and color
-        painter.setPen(Qt.black)
-        painter.setFont(self.font())
+        painter.setPen(Qt.GlobalColor.white)
+        painter.setFont(QFont("Courier", 8, weight = QFont.Weight.Bold))
         
         # Draw text
         painter.drawText(15, 15, f"Orientation: {self._controller.heading:.3f} deg")
         painter.drawText(15, 25, f"X: {self._controller.x:.3f} mm")
         painter.drawText(15, 35, f"Y: {self._controller.y:.3f} mm")
-        painter.drawText(15, 45, f"Delta: {self._controller._delta:.3f} deg")
+        painter.drawText(15, 45, f"Delta: {self._controller.delta:.3f} deg")
+        painter.drawText(15, 55, f"Velocity: {self._controller.velocity:.3f} mm/s")
         
         # End painter
         painter.end()
@@ -107,9 +135,7 @@ class BoatVisualizerScene(GLViewWidget):
         self._timer.timeout.connect(self.refresh)
         self._timer.setInterval(int(self._controller.update_rate))
         self._timer.start()
-        
-        self.show()
-        
+                
     def update_view(self):
         self.refresh()
     
@@ -120,9 +146,23 @@ class BoatVisualizerScene(GLViewWidget):
         self._boat_mesh_item.translate(dx = self._controller.x, dy = self._controller.y, dz = 0.0, local = False)
         self._boat_mesh_item.rotate(angle = self._controller.heading, x = 0, y = 0, z = 1, local = True)
         
+        if self._follow:
+            self.setCameraParams(**self.follow_camera_params())
+        
         # self._boat_mesh_item.rotate(self._controller.dh, 0, 0, 1, local = True)
         # self._boat_mesh_item.translate(self._controller.dy, -self._controller.dx, 0, local = False)
         # self._boat_mesh_item.translate(self._controller.dx, 0, 0, local = False)
         # print(gl_trans_rel.flatten())
         
         self.update()
+        
+    def keyPressEvent(self, ev):
+        key = ev.key()
+        if key == Qt.Key.Key_H:
+            self.setCameraParams(**self.home_camera_params())
+        elif key == Qt.Key.Key_I:
+            self.setCameraParams(**self.isometric_camera_params())
+        elif key == Qt.Key.Key_D:
+            self.setCameraParams(**self.depth_camera_params())
+            
+        return super().keyPressEvent(ev)
