@@ -26,6 +26,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
+#include <stdio.h>
+#include "vl53l0x_driver.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -233,7 +235,12 @@ void initMotorPWM(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
+int _write(int file, char *ptr, int len) {
+  for (int i = 0; i < len; i++) {
+    ITM_SendChar((*ptr++));
+  }
+  return len;
+}
 /* USER CODE END 0 */
 
 /**
@@ -274,7 +281,7 @@ int main(void)
   MX_TIM2_Init();
   MX_BlueNRG_MS_Init();
   /* USER CODE BEGIN 2 */
-
+  vl53l0x_init(&hi2c2, 0x52, VL53L0X_XSHUT_GPIO_Port, VL53L0X_XSHUT_Pin);
   /* USER CODE END 2 */
 
   /* Init scheduler */
