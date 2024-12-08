@@ -58,8 +58,6 @@ typedef struct {
   Direction_t direction;
   bool is_alive;
   bool is_idle;
-  // TODO: Timer handle?
-  // TODO: GPIO handle?
 } MotorState_t;
 
 typedef struct {
@@ -69,7 +67,7 @@ typedef struct {
 } MotorStatus_t;
 
 #define NUM_MOTORS 4
-#define NUM_SPARE_MOTORS     1
+#define NUM_SPARE_MOTORS 1
 
 typedef struct {
   BoatState_t boat_state;
@@ -77,7 +75,7 @@ typedef struct {
   bool collision_detected;
   bool depth_exceeded;
   bool anchor_lifted;
-  MotorStatus_t motor_statuses[NUM_MOTORS];
+  MotorStatus_t motor_statuses[NUM_MOTORS + NUM_SPARE_MOTORS];
 } SystemInformation_t;
 /* USER CODE END PTD */
 
@@ -92,8 +90,6 @@ typedef struct {
 #define DUTY_TO_CCR(duty_cycle_16bit) \
     (((uint32_t)(duty_cycle_16bit) * TIM_ARR) / 65535)
 
-// Macro to convert tick count to seconds
-#define MS_TO_TICKS(msec) ((uint32_t)(msec) * osKernelGetTickFreq() / 1000)
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
@@ -204,8 +200,16 @@ const osMutexAttr_t mutexSystemInfo_attributes = {
   .cb_mem = &mutexSystemInfoControlBlock,
   .cb_size = sizeof(mutexSystemInfoControlBlock),
 };
+/* Definitions for mutexMotorState */
+osMutexId_t mutexMotorStateHandle;
+osStaticMutexDef_t mutexMotorStateControlBlock;
+const osMutexAttr_t mutexMotorState_attributes = {
+  .name = "mutexMotorState",
+  .cb_mem = &mutexMotorStateControlBlock,
+  .cb_size = sizeof(mutexMotorStateControlBlock),
+};
 /* USER CODE BEGIN PV */
-uint32_t motor_timeout = MS_TO_TICKS(2000);
+uint32_t motor_timeout = pdMS_TO_TICKS(2000);
 
 volatile MotorState_t motor_states[NUM_MOTORS + NUM_SPARE_MOTORS];
 
@@ -215,8 +219,8 @@ volatile static SystemInformation_t system_information = {
   .collision_detected = false,
   .control_active = false,
   .depth_exceeded = false,
-  // should this include the status of the spare? How should we handle that?
   .motor_statuses = {
+	  {.direction = kDirectionNull, .duty_cycle = 0, .timeout = false},
 	  {.direction = kDirectionNull, .duty_cycle = 0, .timeout = false},
 	  {.direction = kDirectionNull, .duty_cycle = 0, .timeout = false},
 	  {.direction = kDirectionNull, .duty_cycle = 0, .timeout = false},
@@ -247,6 +251,8 @@ void callbackSensorRead(void *argument);
 void initMotorStates(void);
 void initMotorPWM(void);
 void updateMotorPWM(uint16_t *pwm_array, size_t size);
+void append_to_buffer(char* buffer, size_t* remaining_size, const char* string);
+char* system_info_to_json(const SystemInformation_t* info, char* json_buffer, size_t buffer_size);
 
 /* USER CODE END PFP */
 
@@ -305,6 +311,9 @@ int main(void)
   /* Create the mutex(es) */
   /* creation of mutexSystemInfo */
   mutexSystemInfoHandle = osMutexNew(&mutexSystemInfo_attributes);
+
+  /* creation of mutexMotorState */
+  mutexMotorStateHandle = osMutexNew(&mutexMotorState_attributes);
 
   /* USER CODE BEGIN RTOS_MUTEX */
   /* add mutexes, ... */
@@ -749,8 +758,8 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(GPIOE, M24SR64_Y_RF_DISABLE_Pin|M24SR64_Y_GPO_Pin|ISM43362_RST_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, ARD_D8_Pin|ISM43362_BOOT0_Pin|ISM43362_WAKEUP_Pin|LED2_Pin
-                          |SPSGRF_915_SDN_Pin|ARD_D5_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOB, ARD_D8_Pin|ISM43362_BOOT0_Pin|ISM43362_WAKEUP_Pin|SPSGRF_915_SDN_Pin
+                          |ARD_D5_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOD, USB_OTG_FS_PWR_EN_Pin|PMOD_RESET_Pin|STSAFE_A100_RESET_Pin, GPIO_PIN_RESET);
@@ -782,12 +791,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : BUTTON_EXTI13_Pin */
-  GPIO_InitStruct.Pin = BUTTON_EXTI13_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(BUTTON_EXTI13_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : ARD_A5_Pin ARD_A4_Pin ARD_A3_Pin ARD_A2_Pin
                            ARD_A1_Pin ARD_A0_Pin */
@@ -831,10 +834,10 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(ARD_D6_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : ARD_D8_Pin ISM43362_BOOT0_Pin ISM43362_WAKEUP_Pin LED2_Pin
-                           SPSGRF_915_SDN_Pin ARD_D5_Pin SPSGRF_915_SPI3_CSN_Pin */
-  GPIO_InitStruct.Pin = ARD_D8_Pin|ISM43362_BOOT0_Pin|ISM43362_WAKEUP_Pin|LED2_Pin
-                          |SPSGRF_915_SDN_Pin|ARD_D5_Pin|SPSGRF_915_SPI3_CSN_Pin;
+  /*Configure GPIO pins : ARD_D8_Pin ISM43362_BOOT0_Pin ISM43362_WAKEUP_Pin SPSGRF_915_SDN_Pin
+                           ARD_D5_Pin SPSGRF_915_SPI3_CSN_Pin */
+  GPIO_InitStruct.Pin = ARD_D8_Pin|ISM43362_BOOT0_Pin|ISM43362_WAKEUP_Pin|SPSGRF_915_SDN_Pin
+                          |ARD_D5_Pin|SPSGRF_915_SPI3_CSN_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -926,12 +929,11 @@ void initMotorStates(void)
 	{
 		motor_states[i].direction = system_information.motor_statuses[i].direction;
 		motor_states[i].duty_cycle = system_information.motor_statuses[i].duty_cycle;
+		motor_states[i].is_alive = true;
 		if(i >= NUM_MOTORS){
-			motor_states[i].is_alive = false;
 			motor_states[i].is_idle = true;
 		}else{
-			motor_states[i].is_alive = true;
-					motor_states[i].is_idle = false;
+			motor_states[i].is_idle = false;
 		}
 	}
 }
@@ -956,23 +958,79 @@ void initMotorPWM(void)
 // Update motor states with new PWM values and update timers
 void updateMotorPWM(uint16_t *pwm_array, size_t size)
 {
-	if(size != (NUM_MOTORS + NUM_SPARE_MOTORS));
+	// Check if array has new PWM values for each motor
+	if((size / sizeof(pwm_array[0])) != (NUM_MOTORS + NUM_SPARE_MOTORS))
 	{
-		ErrorHandler();
+		Error_Handler();
 	}
 
+	osMutexAcquire(mutexMotorStateHandle, osWaitForever);
 	// Update motor states with new PWM values
 	for(int i=0; i<(NUM_MOTORS + NUM_SPARE_MOTORS);i++)
 	{
 		motor_states[i].duty_cycle = pwm_array[i];
 	}
+	osMutexRelease(mutexMotorStateHandle);
 
-	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, motor_states[0].duty_cycle);
-	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, motor_states[1].duty_cycle);
-	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, motor_states[2].duty_cycle);
-	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, motor_states[3].duty_cycle);
-	__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, motor_states[4].duty_cycle);
+	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, pwm_array[0]);
+	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, pwm_array[1]);
+	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, pwm_array[2]);
+	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, pwm_array[3]);
+	__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, pwm_array[4]);
 
+}
+
+// Append to JSON buffer safely
+void append_to_buffer(char* buffer, size_t* remaining_size, const char* string) {
+    strncat(buffer, string, *remaining_size - 1);
+    *remaining_size -= strlen(string);
+}
+
+// Convert the struct to a JSON string
+char* system_info_to_json(const SystemInformation_t* info, char* json_buffer, size_t buffer_size) {
+    if (!info || !json_buffer || buffer_size == 0) return NULL;
+
+    size_t remaining_size = buffer_size;
+    char temp_json[128];
+
+    // Start the JSON string
+    snprintf(temp_json, sizeof(temp_json),
+        "{"
+        "\"boat_state\":%d,"
+        "\"control_active\":%s,"
+        "\"collision_detected\":%s,"
+        "\"depth_exceeded\":%s,"
+        "\"anchor_lifted\":%s,"
+        "\"motor_statuses\":[",
+        info->boat_state,
+        info->control_active ? "true" : "false",
+        info->collision_detected ? "true" : "false",
+        info->depth_exceeded ? "true" : "false",
+        info->anchor_lifted ? "true" : "false"
+    );
+    append_to_buffer(json_buffer, &remaining_size, temp_json);
+
+    // Append motor statuses
+    for (int i = 0; i < NUM_MOTORS + NUM_SPARE_MOTORS; i++) {
+        char temp_json[128]; // Temporary buffer for each motor
+        snprintf(temp_json, sizeof(temp_json),
+            "{"
+            "\"direction\":%d,"
+            "\"duty_cycle\":%u,"
+            "\"timeout\":%s"
+            "}%s",
+            info->motor_statuses[i].direction,
+            info->motor_statuses[i].duty_cycle,
+            info->motor_statuses[i].timeout ? "true" : "false",
+            (i < NUM_MOTORS + NUM_SPARE_MOTORS - 1) ? "," : "" // Add comma except for the last item
+        );
+        append_to_buffer(json_buffer, &remaining_size, temp_json);
+    }
+
+    // Close the JSON array and object
+    append_to_buffer(json_buffer, &remaining_size, "]}");
+
+    return json_buffer;
 }
 
 /* USER CODE END 4 */
@@ -1009,7 +1067,7 @@ void StartTaskBoatSM(void *argument)
   /* Infinite loop */
   for(;;)
   {
-    // TODO: maybe protect system information w/ mutex?
+    osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
     switch (system_information.boat_state)
     {
 		case kBoatIdle:
@@ -1019,7 +1077,7 @@ void StartTaskBoatSM(void *argument)
 				system_information.boat_state = kBoatDriving;
 				osThreadFlagsSet(readMotorTaskHandle, THREAD_FLAG_DRIVING);
 			}
-      break;
+			break;
     case kBoatDriving:
       // Driving exit: User input removed
       //               Collision detected or depth exceeded -> anchored
@@ -1055,6 +1113,7 @@ void StartTaskBoatSM(void *argument)
       }
       break;
     }
+    osMutexRelease(mutexSystemInfoHandle);
   }
   /* USER CODE END StartTaskBoatSM */
 }
@@ -1132,17 +1191,18 @@ void StartTaskMotorTmout(void *argument)
 {
   /* USER CODE BEGIN StartTaskMotorTmout */
 	uint32_t current_tick;
-	uint32_t idle_start_time [NUM_MOTORS + NUM_SPARE_MOTORS] = 0;
+	uint32_t idle_start_time [NUM_MOTORS + NUM_SPARE_MOTORS] = {0};
 
   /* Infinite loop */
   for(;;)
   {
 	  osThreadFlagsWait(0x0001, osFlagsWaitAny, osWaitForever);
+	  osMutexAcquire(mutexMotorStateHandle, osWaitForever);
 	  current_tick = osKernelGetTickCount();
 
 	  for(int i=0; i<(NUM_MOTORS + NUM_SPARE_MOTORS);i++){
 		  if(motor_states[i].is_alive){
-			  if (motor_states[i].duty_cycle == 0 && (idle_start_time[i] - current_tick) > motor_timeout)
+			  if (motor_states[i].duty_cycle == 0 && (idle_start_time[i] - current_tick) >= motor_timeout)
 			  {
 				  motor_states[i].is_idle = true;
 			  }else
@@ -1152,6 +1212,7 @@ void StartTaskMotorTmout(void *argument)
 			  }
 		  }
 	  }
+	  osMutexRelease(mutexMotorStateHandle);
   }
   /* USER CODE END StartTaskMotorTmout */
 }

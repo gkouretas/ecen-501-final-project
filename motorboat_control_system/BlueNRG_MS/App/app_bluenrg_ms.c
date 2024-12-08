@@ -19,91 +19,56 @@
 /* Includes ------------------------------------------------------------------*/
 #include "app_bluenrg_ms.h"
 
-#include "hci.h"
 #include "hci_tl.h"
-#include "b_l475e_iot01a1.h"
+#include "sample_service.h"
+#include "role_type.h"
+#include "bluenrg_utils.h"
+#include "bluenrg_gatt_server.h"
+#include "bluenrg_gap_aci.h"
+#include "bluenrg_gatt_aci.h"
+#include "bluenrg_hal_aci.h"
 
 /* USER CODE BEGIN Includes */
 
 /* USER CODE END Includes */
 
 /* Private defines -----------------------------------------------------------*/
-/* UART timeout values */
-#define BLE_UART_SHORT_TIMEOUT      30
-#define BLE_UART_LONG_TIMEOUT       300
+/**
+ * Define the role here only if it is not already defined in the project options
+ * For the CLIENT_ROLE comment the line below
+ * For the SERVER_ROLE uncomment the line below
+ */
+#define SERVER_ROLE
 
-/* HCI Packet types */
-#define HCI_COMMAND_PKT             0x01
-#define HCI_ACLDATA_PKT             0x02
-#define HCI_SCODATA_PKT             0x03
-#define HCI_EVENT_PKT               0x04
-#define HCI_VENDOR_PKT              0xff
-
-#define HCI_TYPE_OFFSET             0
-#define HCI_VENDOR_CMDCODE_OFFSET   1
-#define HCI_VENDOR_LEN_OFFSET       2
-#define HCI_VENDOR_PARAM_OFFSET     4
-
-#define FW_VERSION_MAJOR            1
-#define FW_VERSION_MINOR            9
-
-/* Commands */
-#define VERSION                     0x01
-#define EEPROM_READ                 0x02
-#define EEPROM_WRITE                0x03
-#define BLUENRG_RESET               0x04
-#define HW_BOOTLOADER               0x05
-
-#define MAX_RESP_SIZE               255
-
-#define RESP_VENDOR_CODE_OFFSET     1
-#define RESP_LEN_OFFSET_LSB         2
-#define RESP_LEN_OFFSET_MSB         3
-#define RESP_CMDCODE_OFFSET         4
-#define RESP_STATUS_OFFSET          5
-#define RESP_PARAM_OFFSET           6
-
-/* Types of vendor codes */
-#define ERROR                       0
-/* Error codes */
-#define UNKNOWN_COMMAND	            0x01
-#define INVALID_PARAMETERS          0x12
-
-#define RESPONSE                    1
-/* end of vendor codes */
-
-/* Size of Reception buffer */
-#define UARTHEADERSIZE              4
-#define RXBUFFERSIZE                255
+#define BDADDR_SIZE 6
 
 /* Private macros ------------------------------------------------------------*/
-#define PACK_2_BYTE_PARAMETER(ptr, param)  do{\
-                *((uint8_t *)ptr) = (uint8_t)(param);   \
-                *((uint8_t *)ptr+1) = (uint8_t)(param)>>8; \
-                }while(0)
 
 /* Private variables ---------------------------------------------------------*/
-extern UART_HandleTypeDef hcom_uart[COMn];
-/* Buffer used for reception */
-uint8_t uart_header[UARTHEADERSIZE];
-uint8_t aRxBuffer[RXBUFFERSIZE];
+uint8_t bnrg_expansion_board = IDB04A1; /* at startup, suppose the X-NUCLEO-IDB04A1 is used */
+static volatile uint8_t user_button_init_state = 1;
+static volatile uint8_t user_button_pressed = 0;
+
+#ifdef SERVER_ROLE
+  BLE_RoleTypeDef BLE_Role = SERVER;
+#else
+  BLE_RoleTypeDef BLE_Role = CLIENT;
+#endif
+
+extern volatile uint8_t set_connectable;
+extern volatile int     connected;
+extern volatile uint8_t notification_enabled;
+
+extern volatile uint8_t end_read_tx_char_handle;
+extern volatile uint8_t end_read_rx_char_handle;
 
 /* USER CODE BEGIN PV */
 
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
-void Hal_Write_Serial(const void* data1, const void* data2, int32_t n_bytes1,
-                      int32_t n_bytes2);
-void BlueNRG_HW_Bootloader(void);
-void handle_vendor_command(uint8_t* cmd, uint8_t cmd_len);
-static void User_Init(void);
 static void User_Process(void);
-
-static void Enable_SPI_IRQ(void);
-static void Disable_SPI_IRQ(void);
-static void set_irq_as_input(void);
-static void set_irq_as_output(void);
+static void User_Init(void);
 
 /* USER CODE BEGIN PFP */
 
@@ -134,9 +99,107 @@ void MX_BlueNRG_MS_Init(void)
   /* USER CODE END BlueNRG_MS_Init_PreTreatment */
 
   /* Initialize the peripherals and the BLE Stack */
+  uint8_t CLIENT_BDADDR[] = {0xbb, 0x00, 0x00, 0xE1, 0x80, 0x02};
+  uint8_t SERVER_BDADDR[] = {0xaa, 0x00, 0x00, 0xE1, 0x80, 0x02};
+  uint8_t bdaddr[BDADDR_SIZE];
+  uint16_t service_handle, dev_name_char_handle, appearance_char_handle;
+
+  uint8_t  hwVersion;
+  uint16_t fwVersion;
+  int ret;
+
   User_Init();
 
-  hci_init(NULL, NULL);
+  /* Get the User Button initial state */
+  user_button_init_state = BSP_PB_GetState(BUTTON_KEY);
+
+  hci_init(user_notify, NULL);
+
+  /* get the BlueNRG HW and FW versions */
+  getBlueNRGVersion(&hwVersion, &fwVersion);
+
+  /*
+   * Reset BlueNRG again otherwise we won't
+   * be able to change its MAC address.
+   * aci_hal_write_config_data() must be the first
+   * command after reset otherwise it will fail.
+   */
+  hci_reset();
+
+  HAL_Delay(100);
+
+  printf("HWver %d, FWver %d\n", hwVersion, fwVersion);
+
+  if (hwVersion > 0x30) { /* X-NUCLEO-IDB05A1 expansion board is used */
+    bnrg_expansion_board = IDB05A1;
+  }
+
+  if (BLE_Role == CLIENT) {
+    BLUENRG_memcpy(bdaddr, CLIENT_BDADDR, sizeof(CLIENT_BDADDR));
+  } else {
+    BLUENRG_memcpy(bdaddr, SERVER_BDADDR, sizeof(SERVER_BDADDR));
+  }
+
+  ret = aci_hal_write_config_data(CONFIG_DATA_PUBADDR_OFFSET,
+                                  CONFIG_DATA_PUBADDR_LEN,
+                                  bdaddr);
+  if (ret) {
+    printf("Setting BD_ADDR failed 0x%02x.\n", ret);
+  }
+
+  ret = aci_gatt_init();
+  if (ret) {
+    printf("GATT_Init failed.\n");
+  }
+
+  if (BLE_Role == SERVER) {
+    if (bnrg_expansion_board == IDB05A1) {
+      ret = aci_gap_init_IDB05A1(GAP_PERIPHERAL_ROLE_IDB05A1, 0, 0x07, &service_handle, &dev_name_char_handle, &appearance_char_handle);
+    }
+    else {
+      ret = aci_gap_init_IDB04A1(GAP_PERIPHERAL_ROLE_IDB04A1, &service_handle, &dev_name_char_handle, &appearance_char_handle);
+    }
+  }
+  else {
+    if (bnrg_expansion_board == IDB05A1) {
+      ret = aci_gap_init_IDB05A1(GAP_CENTRAL_ROLE_IDB05A1, 0, 0x07, &service_handle, &dev_name_char_handle, &appearance_char_handle);
+    }
+    else {
+      ret = aci_gap_init_IDB04A1(GAP_CENTRAL_ROLE_IDB04A1, &service_handle, &dev_name_char_handle, &appearance_char_handle);
+    }
+  }
+
+  if (ret != BLE_STATUS_SUCCESS) {
+    printf("GAP_Init failed.\n");
+  }
+
+  ret = aci_gap_set_auth_requirement(MITM_PROTECTION_REQUIRED,
+                                     OOB_AUTH_DATA_ABSENT,
+                                     NULL,
+                                     7,
+                                     16,
+                                     USE_FIXED_PIN_FOR_PAIRING,
+                                     123456,
+                                     BONDING);
+  if (ret == BLE_STATUS_SUCCESS) {
+    printf("BLE Stack Initialized.\n");
+  }
+
+  if (BLE_Role == SERVER) {
+    printf("SERVER: BLE Stack Initialized\n");
+    ret = Add_Sample_Service();
+
+    if (ret == BLE_STATUS_SUCCESS)
+      printf("Service added successfully.\n");
+    else
+      printf("Error while adding service.\n");
+
+  } else {
+    printf("CLIENT: BLE Stack Initialized\n");
+  }
+
+  /* Set output power level */
+  ret = aci_hal_set_tx_power_level(1,4);
 
   /* USER CODE BEGIN BlueNRG_MS_Init_PostTreatment */
 
@@ -153,6 +216,7 @@ void MX_BlueNRG_MS_Process(void)
   /* USER CODE END BlueNRG_MS_Process_PreTreatment */
 
   User_Process();
+  hci_user_evt_proc();
 
   /* USER CODE BEGIN BlueNRG_MS_Process_PostTreatment */
 
@@ -167,257 +231,83 @@ void MX_BlueNRG_MS_Process(void)
  */
 static void User_Init(void)
 {
+  BSP_PB_Init(BUTTON_KEY, BUTTON_MODE_EXTI);
+  BSP_LED_Init(LED2);
+
   BSP_COM_Init(COM1);
 }
 
 /**
- * @brief  Manage the communication with the BlueNRG-MS via UART and SPI.
+ * @brief  Configure the device as Client or Server and manage the communication
+ *         between a client and a server.
  *
  * @param  None
  * @retval None
  */
 static void User_Process(void)
 {
-  HAL_StatusTypeDef status;
-  uint8_t len;
-  int i;
-
-  /* Read uart header */
-  status = HAL_UART_Receive(&hcom_uart[COM1], (uint8_t *)uart_header, UARTHEADERSIZE, BLE_UART_SHORT_TIMEOUT);
-  if (status != HAL_OK && status != HAL_TIMEOUT)
+  if (set_connectable)
   {
-    Error_Handler();
+    /* Establish connection with remote device */
+    Make_Connection();
+    set_connectable = FALSE;
+    user_button_init_state = BSP_PB_GetState(BUTTON_KEY);
   }
 
-  if (status == HAL_OK) {
-    //We actually received data from the GUI
-    PRINTF("From GUI: ");
-
-    for (i = 0; i < UARTHEADERSIZE; i++) {
-      PRINTF("0x%x, ", uart_header[i]);
+  if (BLE_Role == CLIENT)
+  {
+    /* Start TX handle Characteristic dynamic discovery if not yet done */
+    if (connected && !end_read_tx_char_handle){
+      startReadTXCharHandle();
+    }
+    /* Start RX handle Characteristic dynamic discovery if not yet done */
+    else if (connected && !end_read_rx_char_handle){
+      startReadRXCharHandle();
     }
 
-    len = uart_header[UARTHEADERSIZE-1];
-
-    if (len > 0) {
-      /*## Put UART peripheral in reception process ###########################*/
-      /* Any data received will be stored "aRxBuffer" buffer */
-      if(HAL_UART_Receive(&hcom_uart[COM1], (uint8_t *)aRxBuffer, len, BLE_UART_LONG_TIMEOUT) != HAL_OK)
-      {
-        Error_Handler();
-      }
-    }
-
-    for (i = 0; i < len; i++) {
-      PRINTF("0x%x, ", aRxBuffer[i]);
-    }
-    PRINTF("\n");
-
-    /* write data received from the vcom to the BlueNRG chip via SPI */
-    if (uart_header[HCI_TYPE_OFFSET] == HCI_COMMAND_PKT) {
-      //This is an HCI command so pass it to BlueNRG via SPI
-      Hal_Write_Serial(uart_header, aRxBuffer, UARTHEADERSIZE, len);
-    } else {
-      //Process the command locally without bothering with the BlueNRG chip
-      handle_vendor_command(uart_header, UARTHEADERSIZE);
+    if (connected && end_read_tx_char_handle && end_read_rx_char_handle && !notification_enabled)
+    {
+      BSP_LED_Off(LED2); //end of the connection and chars discovery phase
+      enableNotification();
     }
   }
 
-  while (HAL_GPIO_ReadPin(HCI_TL_SPI_EXTI_PORT, HCI_TL_SPI_EXTI_PIN) == GPIO_PIN_SET) {
-    uint8_t rx_buffer[255];
-    uint8_t rx_bytes;
+  /* Check if the User Button has been pushed */
+  if (user_button_pressed)
+  {
+    /* Debouncing */
+    HAL_Delay(50);
 
-    /* Data are available from BlueNRG: read them through SPI */
-    rx_bytes = HCI_TL_SPI_Receive(rx_buffer, sizeof(rx_buffer));
+    /* Wait until the User Button is released */
+    while (BSP_PB_GetState(BUTTON_KEY) == !user_button_init_state);
 
-    /* Check if there is data is so, send it to VCOM */
-    if (rx_bytes > 0) {
-      int i;
+    /* Debouncing */
+    HAL_Delay(50);
 
-      PRINTF("From BlueNRG to GUI: ");
+    if (connected && notification_enabled)
+    {
+      /* Send a toggle command to the remote device */
+      uint8_t data[20] = {'0','1','2','3','4','5','6','7','8','9','A','B','C','D','E','F','G','H','I','J'};
+      sendData(data, sizeof(data));
 
-      for (i = 0; i < rx_bytes; i++) {
-        PRINTF("0x%x, ", rx_buffer[i]);
-
-        if(HAL_UART_Transmit(&hcom_uart[COM1], (uint8_t*)&rx_buffer[i], 1, BLE_UART_LONG_TIMEOUT)!= HAL_OK) {
-          Error_Handler();
-        }
-      }
-      PRINTF("\n");
+      //BSP_LED_Toggle(LED2);  /* Toggle the LED2 locally. */
+                               /* If uncommented be sure the BSP_LED_Init(LED2)
+                                * is called in main().
+                                * E.g. it can be enabled for debugging. */
     }
+
+    /* Reset the User Button flag */
+    user_button_pressed = 0;
   }
 }
 
 /**
- * @brief  Handle vendor command
- * @param  cmd: the command
- * @param  cmd_len: the length of the command
- * @return None
- */
-void handle_vendor_command(uint8_t* cmd, uint8_t cmd_len)
+  * @brief  BSP Push Button callback
+  * @param  Button Specifies the pin connected EXTI line
+  * @retval None.
+  */
+void BSP_PB_Callback(Button_TypeDef Button)
 {
-  int unsupported = 0;
-  uint8_t len = 0;
-  uint8_t response[MAX_RESP_SIZE];
-  int i;
-
-  response[0] = HCI_VENDOR_PKT;
-  response[RESP_VENDOR_CODE_OFFSET] = RESPONSE;
-  response[RESP_CMDCODE_OFFSET] = cmd[HCI_VENDOR_CMDCODE_OFFSET];
-  response[RESP_STATUS_OFFSET] = 0;
-
-  if (cmd[HCI_TYPE_OFFSET] == HCI_VENDOR_PKT) {
-    switch (cmd[HCI_VENDOR_CMDCODE_OFFSET]) {
-    case VERSION:
-      response[RESP_PARAM_OFFSET] = FW_VERSION_MAJOR;
-      response[RESP_PARAM_OFFSET+1] = FW_VERSION_MINOR;
-      len = 2;
-      break;
-
-    case BLUENRG_RESET:
-      HCI_TL_SPI_Reset();
-      break;
-
-    case HW_BOOTLOADER:
-      BlueNRG_HW_Bootloader();
-      break;
-
-    default:
-      unsupported = 1;
-    }
-  } else {
-    unsupported = 1;
-  }
-
-  if (unsupported) {
-    response[RESP_STATUS_OFFSET] = UNKNOWN_COMMAND;
-  }
-
-  len += 2; //Status and Command code
-  PACK_2_BYTE_PARAMETER(response + RESP_LEN_OFFSET_LSB, len);
-  len += RESP_CMDCODE_OFFSET;
-
-  PRINTF("From Nucleo to GUI: ");
-  for (i = 0; i < len; i++) {
-    PRINTF("0x%x, ", response[i]);
-  }
-  PRINTF("\n");
-
-  if(HAL_UART_Transmit(&hcom_uart[COM1], (uint8_t*)response, len, BLE_UART_LONG_TIMEOUT) != HAL_OK) {
-    Error_Handler();
-  }
+  /* Set the User Button flag */
+  user_button_pressed = 1;
 }
-
-/**
- * @brief  Writes data to a serial interface.
- * @param  data1   :  1st buffer
- * @param  data2   :  2nd buffer
- * @param  n_bytes1: number of bytes in 1st buffer
- * @param  n_bytes2: number of bytes in 2nd buffer
- * @retval None
- */
-void Hal_Write_Serial(const void* data1, const void* data2, int32_t n_bytes1,
-                      int32_t n_bytes2)
-{
-  uint8_t buff[UARTHEADERSIZE + RXBUFFERSIZE];
-  uint32_t tickstart;
-
-#if PRINT_CSV_FORMAT
-  print_csv_time();
-  for (int i=0; i<n_bytes1; i++) {
-    PRINT_CSV(" %02x", ((uint8_t *)data1)[i]);
-	 }
-  for (int i=0; i<n_bytes2; i++) {
-    PRINT_CSV(" %02x", ((uint8_t *)data2)[i]);
-	 }
-  PRINT_CSV("\n");
-#endif
-
-  BLUENRG_memcpy(buff, (uint8_t *)data1, n_bytes1);
-  BLUENRG_memcpy(buff + n_bytes1, (uint8_t *)data2, n_bytes2);
-
-  tickstart = HAL_GetTick();
-  while(1){
-    /* Data are available for the BlueNRG: write them through SPI */
-    if (HCI_TL_SPI_Send(buff, n_bytes1+n_bytes2) == 0) break;
-    if ((HAL_GetTick() - tickstart) > (HCI_DEFAULT_TIMEOUT_MS/10)) break;
-  }
-}
-
-/**
- * @brief  Activate internal bootloader using pin.
- * @param  None
- * @retval None
- */
-void BlueNRG_HW_Bootloader(void)
-{
-  Disable_SPI_IRQ();
-  set_irq_as_output();
-
-  HCI_TL_SPI_Reset();
-
-  set_irq_as_input();
-  Enable_SPI_IRQ();
-}
-
-/**
- * @brief  Enable SPI IRQ.
- * @param  None
- * @retval None
- */
-void Enable_SPI_IRQ(void)
-{
-  HAL_NVIC_EnableIRQ(HCI_TL_SPI_EXTI_IRQn);
-}
-
-/**
- * @brief  Disable SPI IRQ.
- * @param  None
- * @retval None
- */
-void Disable_SPI_IRQ(void)
-{
-  HAL_NVIC_DisableIRQ(HCI_TL_SPI_EXTI_IRQn);
-}
-
-/**
- * @brief  Set in Output mode the IRQ.
- * @param  None
- * @retval None
- */
-void set_irq_as_output(void)
-{
-  GPIO_InitTypeDef GPIO_InitStructure;
-
-  /* Pull IRQ high */
-  GPIO_InitStructure.Pin   = HCI_TL_SPI_IRQ_PIN;
-  GPIO_InitStructure.Mode  = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStructure.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-  GPIO_InitStructure.Pull  = GPIO_NOPULL;
-  HAL_GPIO_Init(HCI_TL_SPI_IRQ_PORT, &GPIO_InitStructure);
-  HAL_GPIO_WritePin(HCI_TL_SPI_IRQ_PORT, HCI_TL_SPI_IRQ_PIN, GPIO_PIN_SET);
-}
-
-/**
- * @brief  Set the IRQ in input mode.
- * @param  None
- * @retval None
- */
-void set_irq_as_input(void)
-{
-  GPIO_InitTypeDef GPIO_InitStructure;
-
-  /* IRQ input */
-  GPIO_InitStructure.Pin       = HCI_TL_SPI_IRQ_PIN;
-  GPIO_InitStructure.Mode      = GPIO_MODE_IT_RISING;
-  GPIO_InitStructure.Pull      = GPIO_PULLDOWN;
-  GPIO_InitStructure.Speed     = GPIO_SPEED_FREQ_VERY_HIGH;
-#ifdef IS_GPIO_AF
-  GPIO_InitStructure.Alternate = 0;
-#endif
-  HAL_GPIO_Init(HCI_TL_SPI_IRQ_PORT, &GPIO_InitStructure);
-
-  GPIO_InitStructure.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(HCI_TL_SPI_IRQ_PORT, &GPIO_InitStructure);
-}
-

@@ -1,8 +1,8 @@
 /**
   ******************************************************************************
-  * @file    app_bluenrg_ms.h
+  * @file    App/role_type.h
   * @author  SRA Application Team
-  * @brief   Header file for app_bluenrg_ms.c
+  * @brief   Define BLE role
   ******************************************************************************
   * @attention
   *
@@ -17,22 +17,54 @@
   */
 
 /* Define to prevent recursive inclusion -------------------------------------*/
-#ifndef APP_BLUENRG_MS_H
-#define APP_BLUENRG_MS_H
+#ifndef ROLE_TYPE_H
+#define ROLE_TYPE_H
 
 #ifdef __cplusplus
  extern "C" {
 #endif
 
-/* Includes ------------------------------------------------------------------*/
+/** @addtogroup Applications
+ *  @{
+ */
 
-#include "b_l475e_iot01a1.h"
+/** @addtogroup SampleApp
+ *  @{
+ */
 
-/* Exported Functions --------------------------------------------------------*/
-void MX_BlueNRG_MS_Init(void);
-void MX_BlueNRG_MS_Process(void);
+/** @defgroup ROLE_TYPE
+ * @{
+ */
+
+/** @defgroup ROLE_TYPE_Exported_Types
+ *  @{
+ */
+/* Exported types ------------------------------------------------------------*/
+/**
+* @brief BlueNRG Role.
+*/
+typedef enum {
+  CLIENT = 0, /**< CLIENT is for Central role. */
+  SERVER = 1  /**< SERVER is for Peripheral role. */
+} BLE_RoleTypeDef;
+/**
+ * @}
+ */
+
+/**
+ * @}
+ */
+
+/**
+ * @}
+ */
+
+/**
+ * @}
+ */
 
 #ifdef __cplusplus
 }
 #endif
-#endif /* APP_BLUENRG_MS_H */
+
+#endif /* ROLE_TYPE_H */
