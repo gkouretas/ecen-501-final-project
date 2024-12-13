@@ -298,6 +298,7 @@ int main(void)
 	  {
 		  if (vl53l0x_read_range_single(interface, &range) == HAL_OK)
 		  {
+			  // if range == 8190, sensor is out of range...
 			  printf("range: %d\n", range);
 		  }
 		  else

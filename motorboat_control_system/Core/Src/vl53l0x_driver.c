@@ -665,6 +665,9 @@ HAL_StatusTypeDef vl53l0x_read_range_single(VL53l0X_Interface_t *interface, uint
 
     I2C_READ(i2c_status, interface, REG_RESULT_RANGE_STATUS + REG_SYSTEM_INTERRUPT_CONFIG_GPIO, *range);
 
+    // Flip bytes
+    *range = ((*range << 8) & 0xFF00) | ((*range >> 8) & 0x00FF);
+
     if (vl5310x_clear_isr(interface) != HAL_OK)
     {
     	printf("Failed to clear ISR\n");
