@@ -31,8 +31,6 @@ extern "C" {
 
 /*---------- Print messages from BLE1 files at user level -----------*/
 #define BLE1_DEBUG      0
-/*---------- Print the data travelling over the SPI in the .csv format compatible with the ST BlueNRG GUI -----------*/
-#define PRINT_CSV_FORMAT      0
 /*---------- Number of Bytes reserved for HCI Read Packet -----------*/
 #define HCI_READ_PACKET_SIZE      128
 /*---------- Number of Bytes reserved for HCI Max Payload -----------*/
@@ -74,14 +72,6 @@ extern "C" {
 #define PRINTF(...)                   printf(__VA_ARGS__)
 #else
 #define PRINTF(...)
-#endif
-
-#if PRINT_CSV_FORMAT
-#include <stdio.h>
-#define PRINT_CSV(...)                printf(__VA_ARGS__)
-void print_csv_time(void);
-#else
-#define PRINT_CSV(...)
 #endif
 
 #ifdef __cplusplus

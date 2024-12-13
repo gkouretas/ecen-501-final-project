@@ -19,7 +19,6 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "cmsis_os.h"
-#include "app_bluenrg_ms.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -27,7 +26,8 @@
 #include <stdbool.h>
 #include <string.h>
 #include <stdio.h>
-#include "vl53l0x_driver.h"
+//#include "vl53l0x_driver.h"
+#include "app_bluenrg_ms.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -102,6 +102,8 @@ QSPI_HandleTypeDef hqspi;
 TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
 
+UART_HandleTypeDef huart1;
+
 PCD_HandleTypeDef hpcd_USB_OTG_FS;
 
 /* Definitions for defaultTask */
@@ -135,16 +137,16 @@ const osThreadAttr_t depthDetectTask_attributes = {
   .stack_size = sizeof(depthDetectTaskBuffer),
   .priority = (osPriority_t) osPriorityLow,
 };
-/* Definitions for readMotorTask */
-osThreadId_t readMotorTaskHandle;
-uint32_t readMotorTaskBuffer[ 128 ];
-osStaticThreadDef_t readMotorTaskControlBlock;
-const osThreadAttr_t readMotorTask_attributes = {
-  .name = "readMotorTask",
-  .cb_mem = &readMotorTaskControlBlock,
-  .cb_size = sizeof(readMotorTaskControlBlock),
-  .stack_mem = &readMotorTaskBuffer[0],
-  .stack_size = sizeof(readMotorTaskBuffer),
+/* Definitions for readDataTask */
+osThreadId_t readDataTaskHandle;
+uint32_t readDataTaskBuffer[ 128 ];
+osStaticThreadDef_t readDataTaskControlBlock;
+const osThreadAttr_t readDataTask_attributes = {
+  .name = "readDataTask",
+  .cb_mem = &readDataTaskControlBlock,
+  .cb_size = sizeof(readDataTaskControlBlock),
+  .stack_mem = &readDataTaskBuffer[0],
+  .stack_size = sizeof(readDataTaskBuffer),
   .priority = (osPriority_t) osPriorityLow,
 };
 /* Definitions for sendDataTask */
@@ -238,10 +240,11 @@ static void MX_QUADSPI_Init(void);
 static void MX_USB_OTG_FS_PCD_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_TIM3_Init(void);
+static void MX_USART1_UART_Init(void);
 void StartDefaultTask(void *argument);
 void StartTaskBoatSM(void *argument);
 void StartTaskDepthDetect(void *argument);
-void StartTaskReadMotorCommands(void *argument);
+void StartTaskReadData(void *argument);
 void StartTaskSendData(void *argument);
 void StartTaskMotorTmout(void *argument);
 void callbackMotorTimeout(void *argument);
@@ -301,8 +304,9 @@ int main(void)
   MX_USB_OTG_FS_PCD_Init();
   MX_TIM2_Init();
   MX_TIM3_Init();
-  MX_BlueNRG_MS_Init();
+  MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
+  MX_BlueNRG_MS_Init();
   vl53l0x_init(&hi2c2, 0x52, VL53L0X_XSHUT_GPIO_Port, VL53L0X_XSHUT_Pin);
   /* USER CODE END 2 */
 
@@ -352,14 +356,14 @@ int main(void)
   /* creation of depthDetectTask */
   depthDetectTaskHandle = osThreadNew(StartTaskDepthDetect, NULL, &depthDetectTask_attributes);
 
-  /* creation of readMotorTask */
-  readMotorTaskHandle = osThreadNew(StartTaskReadMotorCommands, NULL, &readMotorTask_attributes);
+  /* creation of readDataTask */
+  readDataTaskHandle = osThreadNew(StartTaskReadData, NULL, &readDataTask_attributes);
 
   /* creation of sendDataTask */
   sendDataTaskHandle = osThreadNew(StartTaskSendData, NULL, &sendDataTask_attributes);
 
   /* creation of motorTmoutTask */
-  motorTmoutTaskHandle = osThreadNew(StartTaskMotorTmout, NULL, &motorTmoutTask_attributes);
+  //motorTmoutTaskHandle = osThreadNew(StartTaskMotorTmout, NULL, &motorTmoutTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -702,6 +706,41 @@ static void MX_TIM3_Init(void)
 }
 
 /**
+  * @brief USART1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART1_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART1_Init 0 */
+
+  /* USER CODE END USART1_Init 0 */
+
+  /* USER CODE BEGIN USART1_Init 1 */
+
+  /* USER CODE END USART1_Init 1 */
+  huart1.Instance = USART1;
+  huart1.Init.BaudRate = 115200;
+  huart1.Init.WordLength = UART_WORDLENGTH_8B;
+  huart1.Init.StopBits = UART_STOPBITS_1;
+  huart1.Init.Parity = UART_PARITY_NONE;
+  huart1.Init.Mode = UART_MODE_TX_RX;
+  huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart1.Init.OverSampling = UART_OVERSAMPLING_16;
+  huart1.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
+  huart1.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
+  if (HAL_UART_Init(&huart1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART1_Init 2 */
+
+  /* USER CODE END USART1_Init 2 */
+
+}
+
+/**
   * @brief USB_OTG_FS Initialization Function
   * @param None
   * @retval None
@@ -758,8 +797,8 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(GPIOE, M24SR64_Y_RF_DISABLE_Pin|M24SR64_Y_GPO_Pin|ISM43362_RST_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, ARD_D8_Pin|ISM43362_BOOT0_Pin|ISM43362_WAKEUP_Pin|SPSGRF_915_SDN_Pin
-                          |ARD_D5_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOB, ARD_D8_Pin|ISM43362_BOOT0_Pin|ISM43362_WAKEUP_Pin|LED2_Pin
+                          |SPSGRF_915_SDN_Pin|ARD_D5_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOD, USB_OTG_FS_PWR_EN_Pin|PMOD_RESET_Pin|STSAFE_A100_RESET_Pin, GPIO_PIN_RESET);
@@ -791,6 +830,12 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : BUTTON_EXTI13_Pin */
+  GPIO_InitStruct.Pin = BUTTON_EXTI13_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(BUTTON_EXTI13_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : ARD_A5_Pin ARD_A4_Pin ARD_A3_Pin ARD_A2_Pin
                            ARD_A1_Pin ARD_A0_Pin */
@@ -834,10 +879,10 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(ARD_D6_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : ARD_D8_Pin ISM43362_BOOT0_Pin ISM43362_WAKEUP_Pin SPSGRF_915_SDN_Pin
-                           ARD_D5_Pin SPSGRF_915_SPI3_CSN_Pin */
-  GPIO_InitStruct.Pin = ARD_D8_Pin|ISM43362_BOOT0_Pin|ISM43362_WAKEUP_Pin|SPSGRF_915_SDN_Pin
-                          |ARD_D5_Pin|SPSGRF_915_SPI3_CSN_Pin;
+  /*Configure GPIO pins : ARD_D8_Pin ISM43362_BOOT0_Pin ISM43362_WAKEUP_Pin LED2_Pin
+                           SPSGRF_915_SDN_Pin ARD_D5_Pin SPSGRF_915_SPI3_CSN_Pin */
+  GPIO_InitStruct.Pin = ARD_D8_Pin|ISM43362_BOOT0_Pin|ISM43362_WAKEUP_Pin|LED2_Pin
+                          |SPSGRF_915_SDN_Pin|ARD_D5_Pin|SPSGRF_915_SPI3_CSN_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -1075,7 +1120,7 @@ void StartTaskBoatSM(void *argument)
 			if (system_information.control_active)
 			{
 				system_information.boat_state = kBoatDriving;
-				osThreadFlagsSet(readMotorTaskHandle, THREAD_FLAG_DRIVING);
+				osThreadFlagsSet(readDataTaskHandle, THREAD_FLAG_DRIVING);
 			}
 			break;
     case kBoatDriving:
@@ -1084,7 +1129,7 @@ void StartTaskBoatSM(void *argument)
       if (!system_information.control_active)
       {
         // Clear flags
-        osThreadFlagsSet(readMotorTaskHandle, 0x0);
+        osThreadFlagsSet(readDataTaskHandle, 0x0);
 
         // If no control is active, return to "idle" state
         system_information.boat_state = kBoatIdle;
@@ -1092,7 +1137,7 @@ void StartTaskBoatSM(void *argument)
       else if (system_information.collision_detected || system_information.depth_exceeded)
       {
         // Clear flags
-        osThreadFlagsSet(readMotorTaskHandle, 0x0);
+        osThreadFlagsSet(readDataTaskHandle, 0x0);
 
         // If an error occurs (i.e. collision detection or depth exceeded), 
         system_information.boat_state = kBoatError;
@@ -1136,29 +1181,22 @@ void StartTaskDepthDetect(void *argument)
   /* USER CODE END StartTaskDepthDetect */
 }
 
-/* USER CODE BEGIN Header_StartTaskReadMotorCommands */
+/* USER CODE BEGIN Header_StartTaskReadData */
 /**
-* @brief Function implementing the readMotorTask thread.
+* @brief Function implementing the readDataTask thread.
 * @param argument: Not used
 * @retval None
 */
-/* USER CODE END Header_StartTaskReadMotorCommands */
-void StartTaskReadMotorCommands(void *argument)
+/* USER CODE END Header_StartTaskReadData */
+void StartTaskReadData(void *argument)
 {
-  /* USER CODE BEGIN StartTaskReadMotorCommands */
-  BoatCommand_t command;
+  /* USER CODE BEGIN StartTaskReadData */
   /* Infinite loop */
   for(;;)
   {
-    // Wait for flags to clear
-    osThreadFlagsWait(THREAD_FLAG_DRIVING, osFlagsNoClear, osWaitForever);
-    if (osMessageQueueGet(queueBoatCommandHandle, (void *)&command, NULL, osWaitForever) == osOK)
-    {
-      // TODO: where will this queue get filled from?
-      // TODO: diff drive PWM command
-    }
+    osDelay(1);
   }
-  /* USER CODE END StartTaskReadMotorCommands */
+  /* USER CODE END StartTaskReadData */
 }
 
 /* USER CODE BEGIN Header_StartTaskSendData */
@@ -1174,8 +1212,7 @@ void StartTaskSendData(void *argument)
   /* Infinite loop */
   for(;;)
   {
-    // TODO: broadcast info over 
-    osDelay(1);
+	  MX_BlueNRG_MS_Process();
   }
   /* USER CODE END StartTaskSendData */
 }

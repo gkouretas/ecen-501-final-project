@@ -147,16 +147,6 @@ int32_t HCI_TL_SPI_Receive(uint8_t* buffer, uint16_t size)
   /* Release CS line */
   HAL_GPIO_WritePin(HCI_TL_SPI_CS_PORT, HCI_TL_SPI_CS_PIN, GPIO_PIN_SET);
 
-#if PRINT_CSV_FORMAT
-  if (len > 0) {
-    print_csv_time();
-    for (int i=0; i<len; i++) {
-      PRINT_CSV(" %02x", buffer[i]);
-    }
-    PRINT_CSV("\n");
-  }
-#endif
-
   return len;
 }
 
