@@ -210,6 +210,7 @@ const osMutexAttr_t mutexMotorState_attributes = {
 };
 /* USER CODE BEGIN PV */
 uint32_t motor_timeout = pdMS_TO_TICKS(2000);
+VL53l0X_Interface_t *tof_interface = NULL;
 
 volatile MotorState_t motor_states[NUM_MOTORS + NUM_SPARE_MOTORS];
 
@@ -266,10 +267,12 @@ int _write(int file, char *ptr, int len) {
 }
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
-    printf("Pin interrupt 0x%X triggered\n", GPIO_Pin);
     if (GPIO_Pin == VL53L0X_GPIO1_EXTI7_Pin)
     {
+    	// Set ISR as "ready"
     	vl53l0x_set_isr_flag();
+
+    	// Unblock depth task
     }
 }
 
@@ -312,30 +315,12 @@ int main(void)
   MX_TIM3_Init();
   MX_BlueNRG_MS_Init();
   /* USER CODE BEGIN 2 */
-  VL53l0X_Interface_t *interface = vl53l0x_init(&hi2c2, 0x52, VL53L0X_XSHUT_GPIO_Port, VL53L0X_XSHUT_Pin);
-  if (interface != NULL)
+  // Initialize ToF sensor
+  tof_interface = vl53l0x_init(&hi2c2, 0x52, VL53L0X_XSHUT_GPIO_Port, VL53L0X_XSHUT_Pin);
+  if (tof_interface == NULL)
   {
-	  uint16_t range;
-	  while (1)
-	  {
-		  if (vl53l0x_read_range_single(interface, &range) == HAL_OK)
-		  {
-			  // if range == 8190, sensor is out of range...
-			  printf("range: %d\n", range);
-		  }
-		  else
-		  {
-			  printf("failure...\n");
-		  }
-
-//		  HAL_Delay(1000);
-	  }
-
-  }
-  else
-  {
-	  printf("oof\n");
-	  while (1);
+	  printf("Failed to initialize ToF sensor\n");
+	  Error_Handler();
   }
   /* USER CODE END 2 */
 
