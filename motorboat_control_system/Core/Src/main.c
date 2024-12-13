@@ -275,6 +275,10 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
     	vl53l0x_set_isr_flag();
 
     	// Unblock depth task
+      if (semaphoreToFISRHandle != NULL)
+      {
+        osSemaphoreRelease(semaphoreToFISRHandle);
+      }
     }
 }
 
@@ -1191,9 +1195,18 @@ void StartTaskDepthDetect(void *argument)
 {
   /* USER CODE BEGIN StartTaskDepthDetect */
   /* Infinite loop */
+  uint16_t detected_depth_raw;
+  vl53l0x_prepare_sample(tof_interface);
+  printf("Kicked off depth sampling\n");
+
   for(;;)
   {
-    osDelay(1);
+    osSemaphoreAcquire(semaphoreToFISRHandle, osWaitForever);
+    vl53l0x_read_range_single(tof_interface, &detected_depth_raw, false);
+
+    printf("Depth: %d\n", detected_depth_raw);
+
+    vl53l0x_prepare_sample(tof_interface);
   }
   /* USER CODE END StartTaskDepthDetect */
 }

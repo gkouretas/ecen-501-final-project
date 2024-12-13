@@ -633,9 +633,10 @@ VL53l0X_Interface_t *vl53l0x_init(I2C_HandleTypeDef *i2c_handle, uint16_t i2c_ad
 void vl53l0x_set_isr_flag()
 {
 	isr_triggered = true;
+	printf("yo\n");
 }
 
-HAL_StatusTypeDef vl53l0x_read_range_single(VL53l0X_Interface_t *interface, uint16_t *range)
+HAL_StatusTypeDef vl53l0x_prepare_sample(VL53l0X_Interface_t *interface)
 {
 	const I2CPacket_t setup_cmd[] = {
 		{0x80, 0x01},
@@ -655,12 +656,26 @@ HAL_StatusTypeDef vl53l0x_read_range_single(VL53l0X_Interface_t *interface, uint
 
 	I2C_WRITE_8BIT(i2c_status, interface, REG_SYSRANGE_START, 0x01);
 
-    uint8_t sysrange_start = 0;
-    do
-    {
-        I2C_READ(i2c_status, interface, REG_SYSRANGE_START, sysrange_start);
-    } while (sysrange_start & 0x01);
+	uint8_t sysrange_start = 0;
+	do
+	{
+		I2C_READ(i2c_status, interface, REG_SYSRANGE_START, sysrange_start);
+	} while (sysrange_start & 0x01);
 
+	return HAL_OK;
+}
+
+HAL_StatusTypeDef vl53l0x_read_range_single(VL53l0X_Interface_t *interface, uint16_t *range, bool prepare_sample)
+{
+	HAL_StatusTypeDef i2c_status;
+
+	if (prepare_sample)
+	{
+		if (vl53l0x_prepare_sample(interface) != HAL_OK)
+		{
+			return HAL_ERROR;
+		}
+	}
     vl5310x_wait_for_isr(interface);
 
     I2C_READ(i2c_status, interface, REG_RESULT_RANGE_STATUS + REG_SYSTEM_INTERRUPT_CONFIG_GPIO, *range);
