@@ -1,32 +1,34 @@
 
-## <b>SampleApp Application Description</b>
+## <b>Virtual_COM_Port Application Description</b>
 
-This application shows how to create a BLE client and server connection.
+This application is an example to be loaded in order to use the BlueNRG GUI with BlueNRG-Ms/BlueNRG-M0 
+development platforms.
 
 Example Description:
 
-This application shows how to simply use the BLE Stack creating a client and server connection.
+Virtual_COM_Port is the application to be used with the BlueNRG GUI SW package 
+(the STSW-BNRGUI available on st.com).
+- User can also use this project in order to port the VCOM application to his
+  specific BlueNRG-MS/BlueNRG-M0 PCB (assuming that the customer PCB has a USB or 
+  RS232 I/O port available for PC connection).
+- This application provides an interface compliant with the Bluetooth Low Energy DTM
+  test commands.
+- This application is not a reference application to be used for BlueNRG-MS/BlueNRG-M0 application
+  development and evaluation.
 
-To test this application you need two STM32 Nucleo boards with their respective
-BlueNRG-MS/BlueNRG-M0 STM32 expansion boards. One board needs to be configured
-as Server-Peripheral role, while the other needs to be configured as Client-Central
-role.
-Before flashing the boards, please make sure to use the right configuration by selecting
-it from the menu options of the toolchain.
-
-Keeping either defined or undefined the #define SERVER_ROLE, in file app_bluenrg_ms.c, the
-target can be respectively configured either as SERVER or as CLIENT.
- - Program the CLIENT on one STM32 Nucleo board, with BlueNRG-MS/BlueNRG-M0 STM32 expansion board,
-   and reset it. 
- - Program the SERVER on a second STM32 Nucleo board, with BlueNRG-MS/BlueNRG-M0 STM32 expansion
-   board, and reset it. 
- - After establishing the connection between the two boards (when the LED2 on the
-   CLIENT turns off),
-   by pressing the USER button on one board, the LD2 LED on the other one gets toggled
-   and viceversa.
- - If you have only one STM32 Nucleo board, you can program it as SERVER and use as CLIENT
-   the BLE IOT app for Android devices available on the Play Store at
-   https://play.google.com/store/apps/details?id=com.stmicro.bleiot 
+To update the BlueNRG-MS stack on the BlueNRG-M0 module:
+- Flash the Virtual_COM_Port binary file on your STM32 board equipped with the X-NUCLEO-IDB05A2
+  expansion board
+- Launch the latest version of the BlueNRG GUI (the STSW-BNRGUI available on st.com)
+- From Settings -> Set Baud Rate, set the serial port baud rate to 115200
+- Select the COM port and open it
+- From Tools -> Stack Updater, select BlueNRG-MS
+- Click Browse
+  - select the folder BlueNRG-MS_stack
+  - select the .img file for 32MHz, XO32K, 4M
+    (e.g., for BlueNRG-MS stack V7.3a, the bluenrg_7_3a_Mode_2-32MHz-XO32K_4M.img)
+  - click Open
+- Click Update and wait for the process to be completed
 
 Known limitations:
 
@@ -35,21 +37,19 @@ Known limitations:
   Nucleo-L476RG board, remove from the IDE project the file stm32l4xx_nucleo.c in the Application/User
   virtual folder and delete, from Src and Inc folders, the files: stm32l4xx_nucleo.c, stm32l4xx_nucleo.h
   and stm32l4xx_nucleo_errno.h.
- 
+
 ### <b>Keywords</b>
 
-BLE, Master, Slave, Central, Peripheral, SPI, BlueNRG-M0, BlueNRG-MS
+BLE, SPI, USART, VCOM, BlueNRG-M0, BlueNRG-MS
 
 ### <b>Directory contents</b>
 
- - app_bluenrg_ms.c       SampleApp initialization and applicative code
- 
+ - app_bluenrg_ms.c       Virtual_COM_Port initialization and applicative code
+  
  - hci_tl_interface.c     Interface to the BlueNRG HCI Transport Layer 
  
  - main.c                 Main program body
- 
- - sample_service.c       Add services using a vendor specific profile
- 
+  
  - stm32**xx_hal_msp.c    Source code for MSP Initialization and de-Initialization
 
  - stm32**xx_it.c         Source code for interrupt Service Routines
@@ -59,7 +59,7 @@ BLE, Master, Slave, Central, Peripheral, SPI, BlueNRG-M0, BlueNRG-MS
  - stm32**xx_nucleo_bus.c Source file for the BSP BUS IO driver
  
  - system_stm32**xx.c     CMSIS Cortex-Mx Device Peripheral Access Layer System Source File
-
+  
 ### <b>Hardware and Software environment</b>
 
   - This example runs on STM32 Nucleo boards with X-NUCLEO-IDB05A2 STM32 expansion board
@@ -90,6 +90,9 @@ In order to make the program work, you must do the following:
 
  - Alternatively, you can download the pre-built binaries in "Binary" 
    folder included in the distributed package.
+
+ - IMPORTANT NOTE: To avoid issues with USB connection (mandatory if you have USB 3.0), it is   
+   suggested to update the ST-Link/V2 firmware for STM32 Nucleo boards to the latest version.
 
 ### <b>Author</b>
 
