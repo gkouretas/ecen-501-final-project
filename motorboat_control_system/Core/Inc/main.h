@@ -66,6 +66,7 @@ int _write(int file, char *ptr, int len);
 #define M24SR64_Y_RF_DISABLE_GPIO_Port GPIOE
 #define USB_OTG_FS_OVRCR_EXTI3_Pin GPIO_PIN_3
 #define USB_OTG_FS_OVRCR_EXTI3_GPIO_Port GPIOE
+#define USB_OTG_FS_OVRCR_EXTI3_EXTI_IRQn EXTI3_IRQn
 #define M24SR64_Y_GPO_Pin GPIO_PIN_4
 #define M24SR64_Y_GPO_GPIO_Port GPIOE
 #define SPSGRF_915_GPIO3_EXTI5_Pin GPIO_PIN_5
@@ -107,6 +108,7 @@ int _write(int file, char *ptr, int len);
 #define ARD_A0_GPIO_Port GPIOC
 #define ARD_D3_Pin GPIO_PIN_0
 #define ARD_D3_GPIO_Port GPIOB
+#define ARD_D3_EXTI_IRQn EXTI0_IRQn
 #define ARD_D6_Pin GPIO_PIN_1
 #define ARD_D6_GPIO_Port GPIOB
 #define ARD_D8_Pin GPIO_PIN_2
@@ -199,6 +201,7 @@ int _write(int file, char *ptr, int len);
 #define PMOD_SPI2_SCK_GPIO_Port GPIOD
 #define PMOD_IRQ_EXTI12_Pin GPIO_PIN_2
 #define PMOD_IRQ_EXTI12_GPIO_Port GPIOD
+#define PMOD_IRQ_EXTI12_EXTI_IRQn EXTI2_IRQn
 #define PMOD_UART2_CTS_Pin GPIO_PIN_3
 #define PMOD_UART2_CTS_GPIO_Port GPIOD
 #define PMOD_UART2_RTS_Pin GPIO_PIN_4
@@ -227,6 +230,7 @@ int _write(int file, char *ptr, int len);
 #define ISM43362_SPI3_CSN_GPIO_Port GPIOE
 #define ISM43362_DRDY_EXTI1_Pin GPIO_PIN_1
 #define ISM43362_DRDY_EXTI1_GPIO_Port GPIOE
+#define ISM43362_DRDY_EXTI1_EXTI_IRQn EXTI1_IRQn
 
 /* USER CODE BEGIN Private defines */
 

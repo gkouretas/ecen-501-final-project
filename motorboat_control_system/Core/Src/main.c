@@ -241,6 +241,15 @@ int _write(int file, char *ptr, int len) {
   }
   return len;
 }
+
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
+    printf("Pin interrupt 0x%X triggered\n", GPIO_Pin);
+    if (GPIO_Pin == VL53L0X_GPIO1_EXTI7_Pin)
+    {
+    	vl53l0x_set_isr_flag();
+    }
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -281,7 +290,30 @@ int main(void)
   MX_TIM2_Init();
   MX_BlueNRG_MS_Init();
   /* USER CODE BEGIN 2 */
-  vl53l0x_init(&hi2c2, 0x52, VL53L0X_XSHUT_GPIO_Port, VL53L0X_XSHUT_Pin);
+  VL53l0X_Interface_t *interface = vl53l0x_init(&hi2c2, 0x52, VL53L0X_XSHUT_GPIO_Port, VL53L0X_XSHUT_Pin);
+  if (interface != NULL)
+  {
+	  uint16_t range;
+	  while (1)
+	  {
+		  if (vl53l0x_read_range_single(interface, &range) == HAL_OK)
+		  {
+			  printf("range: %d\n", range);
+		  }
+		  else
+		  {
+			  printf("failure...\n");
+		  }
+
+//		  HAL_Delay(1000);
+	  }
+
+  }
+  else
+  {
+	  printf("oof\n");
+	  while (1);
+  }
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -874,11 +906,17 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : VL53L0X_GPIO1_EXTI7_Pin LSM3MDL_DRDY_EXTI8_Pin */
-  GPIO_InitStruct.Pin = VL53L0X_GPIO1_EXTI7_Pin|LSM3MDL_DRDY_EXTI8_Pin;
+  /*Configure GPIO pin : VL53L0X_GPIO1_EXTI7_Pin */
+  GPIO_InitStruct.Pin = VL53L0X_GPIO1_EXTI7_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(VL53L0X_GPIO1_EXTI7_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : LSM3MDL_DRDY_EXTI8_Pin */
+  GPIO_InitStruct.Pin = LSM3MDL_DRDY_EXTI8_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+  HAL_GPIO_Init(LSM3MDL_DRDY_EXTI8_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : PMOD_SPI2_SCK_Pin */
   GPIO_InitStruct.Pin = PMOD_SPI2_SCK_Pin;
@@ -905,6 +943,18 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI0_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(EXTI0_IRQn);
+
+  HAL_NVIC_SetPriority(EXTI1_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(EXTI1_IRQn);
+
+  HAL_NVIC_SetPriority(EXTI2_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(EXTI2_IRQn);
+
+  HAL_NVIC_SetPriority(EXTI3_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(EXTI3_IRQn);
+
   HAL_NVIC_SetPriority(EXTI9_5_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
 
