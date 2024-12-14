@@ -36,7 +36,6 @@
 typedef StaticTask_t osStaticThreadDef_t;
 typedef StaticTimer_t osStaticTimerDef_t;
 typedef StaticSemaphore_t osStaticMutexDef_t;
-typedef StaticSemaphore_t osStaticSemaphoreDef_t;
 /* USER CODE BEGIN PTD */
 typedef enum {
 	kBoatIdle = 0,
@@ -151,7 +150,7 @@ const osThreadAttr_t readDataTask_attributes = {
   .cb_size = sizeof(readDataTaskControlBlock),
   .stack_mem = &readDataTaskBuffer[0],
   .stack_size = sizeof(readDataTaskBuffer),
-  .priority = (osPriority_t) osPriorityHigh1,
+  .priority = (osPriority_t) osPriorityLow,
 };
 /* Definitions for sendDataTask */
 osThreadId_t sendDataTaskHandle;
@@ -163,7 +162,7 @@ const osThreadAttr_t sendDataTask_attributes = {
   .cb_size = sizeof(sendDataTaskControlBlock),
   .stack_mem = &sendDataTaskBuffer[0],
   .stack_size = sizeof(sendDataTaskBuffer),
-  .priority = (osPriority_t) osPriorityHigh,
+  .priority = (osPriority_t) osPriorityLow,
 };
 /* Definitions for motorTmoutTask */
 osThreadId_t motorTmoutTaskHandle;
@@ -176,18 +175,6 @@ const osThreadAttr_t motorTmoutTask_attributes = {
   .stack_mem = &motorTmoutTaskBuffer[0],
   .stack_size = sizeof(motorTmoutTaskBuffer),
   .priority = (osPriority_t) osPriorityLow,
-};
-/* Definitions for BLETask */
-osThreadId_t BLETaskHandle;
-uint32_t BLETaskBuffer[ 128 ];
-osStaticThreadDef_t BLETaskControlBlock;
-const osThreadAttr_t BLETask_attributes = {
-  .name = "BLETask",
-  .cb_mem = &BLETaskControlBlock,
-  .cb_size = sizeof(BLETaskControlBlock),
-  .stack_mem = &BLETaskBuffer[0],
-  .stack_size = sizeof(BLETaskBuffer),
-  .priority = (osPriority_t) osPriorityHigh2,
 };
 /* Definitions for queueBoatCommand */
 osMessageQueueId_t queueBoatCommandHandle;
@@ -210,14 +197,6 @@ const osTimerAttr_t timerSensorRead_attributes = {
   .cb_mem = &timerSensorReadControlBlock,
   .cb_size = sizeof(timerSensorReadControlBlock),
 };
-/* Definitions for timerBLEUpdate */
-osTimerId_t timerBLEUpdateHandle;
-osStaticTimerDef_t timerBLEUpdateControlBlock;
-const osTimerAttr_t timerBLEUpdate_attributes = {
-  .name = "timerBLEUpdate",
-  .cb_mem = &timerBLEUpdateControlBlock,
-  .cb_size = sizeof(timerBLEUpdateControlBlock),
-};
 /* Definitions for mutexSystemInfo */
 osMutexId_t mutexSystemInfoHandle;
 osStaticMutexDef_t mutexSystemInfoControlBlock;
@@ -233,14 +212,6 @@ const osMutexAttr_t mutexMotorState_attributes = {
   .name = "mutexMotorState",
   .cb_mem = &mutexMotorStateControlBlock,
   .cb_size = sizeof(mutexMotorStateControlBlock),
-};
-/* Definitions for myBinarySem01 */
-osSemaphoreId_t myBinarySem01Handle;
-osStaticSemaphoreDef_t myBinarySem01ControlBlock;
-const osSemaphoreAttr_t myBinarySem01_attributes = {
-  .name = "myBinarySem01",
-  .cb_mem = &myBinarySem01ControlBlock,
-  .cb_size = sizeof(myBinarySem01ControlBlock),
 };
 /* USER CODE BEGIN PV */
 VL53l0X_Interface_t *tof_intf = NULL;
@@ -280,10 +251,8 @@ void StartTaskDepthDetect(void *argument);
 void StartTaskReadData(void *argument);
 void StartTaskSendData(void *argument);
 void StartTaskMotorTmout(void *argument);
-void StartBLETask(void *argument);
 void callbackMotorTimeout(void *argument);
 void callbackSensorRead(void *argument);
-void callbackBLEUpdate(void *argument);
 
 /* USER CODE BEGIN PFP */
 void initMotorStates(void);
@@ -304,17 +273,15 @@ int _write(int file, char *ptr, int len) {
 }
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
-    printf("Pin interrupt 0x%X triggered\n", GPIO_Pin);
     if (GPIO_Pin == VL53L0X_GPIO1_EXTI7_Pin)
     {
+    	// If we triggered the ToF sensor ISR, mark as ready and unblock the depth detection task
     	vl53l0x_set_isr_flag();
 
     	if (depthDetectTaskHandle != NULL)
     	{
-          BaseType_t xHigherPriorityTaskWoken;
-          xHigherPriorityTaskWoken = pdFALSE;
-          xSemaphoreGiveFromISR( myBinarySem01Handle, &xHigherPriorityTaskWoken );
-          portYIELD_FROM_ISR( xHigherPriorityTaskWoken );
+			// Unblock thread flags task
+			osThreadFlagsSet(depthDetectTaskHandle, THREAD_FLAG_DEPTH_READING_READY);
     	}
     }
 }
@@ -360,24 +327,6 @@ int main(void)
   /* USER CODE BEGIN 2 */
   MX_BlueNRG_MS_Init();
 
-  // HAL_NVIC_SetPriority(EXTI0_IRQn, 5, 0);
-  // HAL_NVIC_EnableIRQ(EXTI0_IRQn);
-
-  // HAL_NVIC_SetPriority(EXTI1_IRQn, 5, 0);
-  // HAL_NVIC_EnableIRQ(EXTI1_IRQn);
-
-  // HAL_NVIC_SetPriority(EXTI2_IRQn, 5, 0);
-  // HAL_NVIC_EnableIRQ(EXTI2_IRQn);
-
-  // HAL_NVIC_SetPriority(EXTI3_IRQn, 5, 0);
-  // HAL_NVIC_EnableIRQ(EXTI3_IRQn);
-
-  // HAL_NVIC_SetPriority(EXTI9_5_IRQn, 5, 0);
-  // HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
-
-  // HAL_NVIC_SetPriority(EXTI15_10_IRQn, 5, 0);
-  // HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
-
   tof_intf = vl53l0x_init(&hi2c2, 0x52, VL53L0X_XSHUT_GPIO_Port, VL53L0X_XSHUT_Pin);
   if (tof_intf == NULL)
   {
@@ -399,10 +348,6 @@ int main(void)
   /* add mutexes, ... */
   /* USER CODE END RTOS_MUTEX */
 
-  /* Create the semaphores(s) */
-  /* creation of myBinarySem01 */
-  myBinarySem01Handle = osSemaphoreNew(1, 1, &myBinarySem01_attributes);
-
   /* USER CODE BEGIN RTOS_SEMAPHORES */
   /* add semaphores, ... */
   /* USER CODE END RTOS_SEMAPHORES */
@@ -414,15 +359,12 @@ int main(void)
   /* creation of timerSensorRead */
   timerSensorReadHandle = osTimerNew(callbackSensorRead, osTimerPeriodic, NULL, &timerSensorRead_attributes);
 
-  /* creation of timerBLEUpdate */
-  timerBLEUpdateHandle = osTimerNew(callbackBLEUpdate, osTimerPeriodic, NULL, &timerBLEUpdate_attributes);
-
   /* USER CODE BEGIN RTOS_TIMERS */
   /* start timers, add new ones, ... */
-  if(osTimerStart(timerBLEUpdateHandle, 10) != osOK)
-  {
-	  Error_Handler();
-  }
+//  if(osTimerStart(timerBLEUpdateHandle, 10) != osOK)
+//  {
+//	  Error_Handler();
+//  }
   /* USER CODE END RTOS_TIMERS */
 
   /* Create the queue(s) */
@@ -451,9 +393,6 @@ int main(void)
 
   /* creation of motorTmoutTask */
   motorTmoutTaskHandle = osThreadNew(StartTaskMotorTmout, NULL, &motorTmoutTask_attributes);
-
-  /* creation of BLETask */
-  BLETaskHandle = osThreadNew(StartBLETask, NULL, &BLETask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -1281,12 +1220,14 @@ void StartTaskBoatSM(void *argument)
 void StartTaskDepthDetect(void *argument)
 {
   /* USER CODE BEGIN StartTaskDepthDetect */
+  uint16_t range;
   /* Infinite loop */
   for(;;)
   {
 	  vl53l0x_prepare_sample(tof_intf);
-	  xSemaphoreTake(myBinarySem01Handle, portMAX_DELAY);
-	  printf("here2\n");
+	  osThreadFlagsWait(THREAD_FLAG_DEPTH_READING_READY, osFlagsWaitAll, osWaitForever);
+	  vl53l0x_read_range_single(tof_intf, &range, false);
+	  printf("Depth range: %d\n", range);
   }
   /* USER CODE END StartTaskDepthDetect */
 }
@@ -1369,25 +1310,6 @@ void StartTaskMotorTmout(void *argument)
   /* USER CODE END StartTaskMotorTmout */
 }
 
-/* USER CODE BEGIN Header_StartBLETask */
-/**
-* @brief Function implementing the BLETask thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_StartBLETask */
-void StartBLETask(void *argument)
-{
-  /* USER CODE BEGIN StartBLETask */
-  /* Infinite loop */
-  for(;;)
-  {
-	  osThreadFlagsWait(0x0001, osFlagsWaitAny, osWaitForever);
-	  MX_BlueNRG_MS_Process();
-  }
-  /* USER CODE END StartBLETask */
-}
-
 /* callbackMotorTimeout function */
 void callbackMotorTimeout(void *argument)
 {
@@ -1402,14 +1324,6 @@ void callbackSensorRead(void *argument)
   /* USER CODE BEGIN callbackSensorRead */
 
   /* USER CODE END callbackSensorRead */
-}
-
-/* callbackBLEUpdate function */
-void callbackBLEUpdate(void *argument)
-{
-  /* USER CODE BEGIN callbackBLEUpdate */
-	osThreadFlagsSet(BLETaskHandle, 0x0001);
-  /* USER CODE END callbackBLEUpdate */
 }
 
 /**

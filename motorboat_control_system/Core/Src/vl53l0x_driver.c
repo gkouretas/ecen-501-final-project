@@ -119,10 +119,8 @@ static HAL_StatusTypeDef vl5310x_wait_for_isr(VL53l0X_Interface_t *interface)
 	uint8_t interrupt_status;
     do {
     	I2C_READ(i2c_status, interface, REG_RESULT_INTERRUPT_STATUS, interrupt_status);
-    	printf("int status: %d\n", interrupt_status);
     	break;
     } while ((interrupt_status & 0x07) == 0);
-	printf("ISR triggered\n");
 
 	return HAL_OK;
 }
@@ -131,22 +129,6 @@ static HAL_StatusTypeDef vl5310x_clear_isr(VL53l0X_Interface_t *interface)
 {
 	HAL_StatusTypeDef i2c_status;
 	I2C_WRITE_8BIT(i2c_status, interface, REG_SYSTEM_INTERRUPT_CLEAR, 0x1);
-
-//	uint8_t resp;
-//	uint8_t count = 0;
-//	HAL_StatusTypeDef i2c_status;
-//	do {
-//		I2C_WRITE_8BIT(i2c_status, interface, REG_SYSTEM_INTERRUPT_CLEAR, 0x1);
-//		I2C_WRITE_8BIT(i2c_status, interface, REG_SYSTEM_INTERRUPT_CLEAR, 0x0);
-//		I2C_READ(i2c_status, interface, REG_RESULT_INTERRUPT_STATUS, resp);
-//	} while (((resp & 0x07) != 0x00)
-//			&& (count++ < 3));
-//
-//	printf("resp: %d\n", resp);
-//	if ((resp & 0x07) != 0x00)
-//	{
-//		return HAL_ERROR;
-//	}
 
 	return HAL_OK;
 }
@@ -633,7 +615,6 @@ VL53l0X_Interface_t *vl53l0x_init(I2C_HandleTypeDef *i2c_handle, uint16_t i2c_ad
 void vl53l0x_set_isr_flag()
 {
 	isr_triggered = true;
-	printf("yo\n");
 }
 
 HAL_StatusTypeDef vl53l0x_prepare_sample(VL53l0X_Interface_t *interface)
