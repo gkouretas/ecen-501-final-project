@@ -26,7 +26,9 @@
 #include <stdbool.h>
 #include <string.h>
 #include <stdio.h>
+#include <math.h>
 #include "vl53l0x_driver.h"
+#include "stm32l475e_iot01_accelero.h"
 #include "app_bluenrg_ms.h"
 #include "sample_service.h"
 #include "hci_tl.h"
@@ -41,7 +43,7 @@ typedef enum {
 	kBoatIdle = 0,
 	kBoatDriving = 1,
 	kBoatAnchored = 2,
-  kBoatError = 3
+	kBoatError = 3
 } BoatState_t;
 
 typedef struct {
@@ -77,6 +79,8 @@ typedef struct {
   bool collision_detected;
   bool depth_exceeded;
   bool anchor_lifted;
+  uint16_t depth_mm;
+  uint8_t tilt_deg;
   MotorStatus_t motor_statuses[NUM_MOTORS + NUM_SPARE_MOTORS];
 } SystemInformation_t;
 /* USER CODE END PTD */
@@ -85,6 +89,10 @@ typedef struct {
 /* USER CODE BEGIN PD */
 #define THREAD_FLAG_DRIVING 0x1
 #define THREAD_FLAG_DEPTH_READING_READY 0x1
+
+#define RAD_2_DEG(x) ((x) * 180 / 3.14159265f)
+#define DEPTH_RANGE_MAXIMUM_MM                1000 // 1m
+#define ACCEL_SAMPLING_RATE                   100 // 10 Hz
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -188,6 +196,18 @@ const osThreadAttr_t BLETask_attributes = {
   .stack_size = sizeof(BLETaskBuffer),
   .priority = (osPriority_t) osPriorityHigh2,
 };
+/* Definitions for tiltDetectTask */
+osThreadId_t tiltDetectTaskHandle;
+uint32_t tiltDetectionTaBuffer[ 128 ];
+osStaticThreadDef_t tiltDetectionTaControlBlock;
+const osThreadAttr_t tiltDetectTask_attributes = {
+  .name = "tiltDetectTask",
+  .cb_mem = &tiltDetectionTaControlBlock,
+  .cb_size = sizeof(tiltDetectionTaControlBlock),
+  .stack_mem = &tiltDetectionTaBuffer[0],
+  .stack_size = sizeof(tiltDetectionTaBuffer),
+  .priority = (osPriority_t) osPriorityLow,
+};
 /* Definitions for queueBoatCommand */
 osMessageQueueId_t queueBoatCommandHandle;
 const osMessageQueueAttr_t queueBoatCommand_attributes = {
@@ -272,6 +292,7 @@ void StartTaskReadData(void *argument);
 void StartTaskSendData(void *argument);
 void StartTaskMotorTmout(void *argument);
 void StartBLETask(void *argument);
+void StartTiltDetection(void *argument);
 void callbackMotorTimeout(void *argument);
 void callbackSensorRead(void *argument);
 void callbackBLEUpdate(void *argument);
@@ -351,6 +372,12 @@ int main(void)
   /* USER CODE BEGIN 2 */
   MX_BlueNRG_MS_Init();
 
+  if (BSP_ACCELERO_Init() != 0)
+  {
+    printf("Failed to initialize acceleromter\n");
+    Error_Handler();
+  }
+
   tof_intf = vl53l0x_init(&hi2c2, 0x52, VL53L0X_XSHUT_GPIO_Port, VL53L0X_XSHUT_Pin);
   if (tof_intf == NULL)
   {
@@ -423,6 +450,9 @@ int main(void)
 
   /* creation of BLETask */
   BLETaskHandle = osThreadNew(StartBLETask, NULL, &BLETask_attributes);
+
+  /* creation of tiltDetectTask */
+  tiltDetectTaskHandle = osThreadNew(StartTiltDetection, NULL, &tiltDetectTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -1170,8 +1200,7 @@ void StartDefaultTask(void *argument)
   /* Infinite loop */
   for(;;)
   {
-	  osThreadFlagsWait(0x0001, osFlagsWaitAny, osWaitForever);
-	  MX_BlueNRG_MS_Process();
+	  osDelay(1);
   }
   /* USER CODE END 5 */
 }
@@ -1273,6 +1302,12 @@ void StartTaskDepthDetect(void *argument)
 	  {
 		  vl53l0x_read_range_single(tof_intf, &range, false);
 	  }
+
+	  osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
+	  system_information.depth_mm = range;
+	  system_information.depth_exceeded = range > DEPTH_RANGE_MAXIMUM_MM;
+	  osMutexRelease(mutexSystemInfoHandle);
+
 	  printf("Depth range: %d\n", range);
   }
   /* USER CODE END StartTaskDepthDetect */
@@ -1373,6 +1408,31 @@ void StartBLETask(void *argument)
 	  MX_BlueNRG_MS_Process();
   }
   /* USER CODE END StartBLETask */
+}
+
+/* USER CODE BEGIN Header_StartTiltDetection */
+/**
+* @brief Function implementing the tiltDetectionTa thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartTiltDetection */
+void StartTiltDetection(void *argument)
+{
+  /* USER CODE BEGIN StartTiltDetection */
+  int16_t accel_buf[3];
+  float tilt;
+  uint32_t tick = osKernelGetTickCount();
+  /* Infinite loop */
+  for(;;)
+  {
+    tick += ACCEL_SAMPLING_RATE;
+    BSP_ACCELERO_AccGetXYZ(accel_buf);
+    tilt = RAD_2_DEG(atan2(accel_buf[1], accel_buf[2]));
+    printf("%.3f\n", tilt);
+    osDelayUntil(tick);
+  }
+  /* USER CODE END StartTiltDetection */
 }
 
 /* callbackMotorTimeout function */
