@@ -3,6 +3,7 @@
         "get_nucleo_serial_comm.h": "c",
         "required_version.h": "c",
         "vl53l0x_platform.h": "c",
-        "vl53l0x_api.h": "c"
+        "vl53l0x_api.h": "c",
+        "cmsis_os.h": "c"
     }
 }

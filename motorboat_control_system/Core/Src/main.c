@@ -82,6 +82,7 @@ typedef struct {
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define THREAD_FLAG_DRIVING 0x1
+#define THREAD_FLAG_TOF_SAMPLE_READY 0x1
 
 #define PWM_TIMER_PRIMARY_HANDLE   &htim1
 #define PWM_TIMER_SECONDARY_HANDLE &htim2
@@ -275,9 +276,11 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
     	vl53l0x_set_isr_flag();
 
     	// Unblock depth task
-      if (semaphoreToFISRHandle != NULL)
+      if (depthDetectTaskHandle != NULL)
       {
-        osSemaphoreRelease(semaphoreToFISRHandle);
+        printf("ready\n");
+        osThreadFlagsSet(depthDetectTaskHandle, THREAD_FLAG_TOF_SAMPLE_READY);
+        printf("ready2\n");
       }
     }
 }
@@ -773,7 +776,7 @@ static void MX_DMA_Init(void)
 
   /* DMA interrupt init */
   /* DMA1_Channel2_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Channel2_IRQn, 5, 0);
+  HAL_NVIC_SetPriority(DMA1_Channel2_IRQn, 1, 0);
   HAL_NVIC_EnableIRQ(DMA1_Channel2_IRQn);
 
 }
@@ -965,22 +968,22 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /* EXTI interrupt init*/
-  HAL_NVIC_SetPriority(EXTI0_IRQn, 5, 0);
+  HAL_NVIC_SetPriority(EXTI0_IRQn, 1, 0);
   HAL_NVIC_EnableIRQ(EXTI0_IRQn);
 
-  HAL_NVIC_SetPriority(EXTI1_IRQn, 5, 0);
+  HAL_NVIC_SetPriority(EXTI1_IRQn, 1, 0);
   HAL_NVIC_EnableIRQ(EXTI1_IRQn);
 
-  HAL_NVIC_SetPriority(EXTI2_IRQn, 5, 0);
+  HAL_NVIC_SetPriority(EXTI2_IRQn, 1, 0);
   HAL_NVIC_EnableIRQ(EXTI2_IRQn);
 
-  HAL_NVIC_SetPriority(EXTI3_IRQn, 5, 0);
+  HAL_NVIC_SetPriority(EXTI3_IRQn, 1, 0);
   HAL_NVIC_EnableIRQ(EXTI3_IRQn);
 
-  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 5, 0);
+  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 1, 0);
   HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
 
-  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 5, 0);
+  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 1, 0);
   HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
 
 /* USER CODE BEGIN MX_GPIO_Init_2 */
@@ -1201,7 +1204,7 @@ void StartTaskDepthDetect(void *argument)
 
   for(;;)
   {
-    osSemaphoreAcquire(semaphoreToFISRHandle, osWaitForever);
+    osThreadFlagsWait(THREAD_FLAG_TOF_SAMPLE_READY, osFlagsWaitAll, osWaitForever);
     vl53l0x_read_range_single(tof_interface, &detected_depth_raw, false);
 
     printf("Depth: %d\n", detected_depth_raw);
