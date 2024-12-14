@@ -657,6 +657,7 @@ HAL_StatusTypeDef vl53l0x_read_range_single(VL53l0X_Interface_t *interface, uint
 			return HAL_ERROR;
 		}
 	}
+
     vl5310x_wait_for_isr(interface);
 
     I2C_READ(i2c_status, interface, REG_RESULT_RANGE_STATUS + REG_SYSTEM_INTERRUPT_CONFIG_GPIO, *range);

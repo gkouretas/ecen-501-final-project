@@ -109,12 +109,17 @@ UART_HandleTypeDef huart1;
 
 PCD_HandleTypeDef hpcd_USB_OTG_FS;
 
-/* Definitions for defaultTask */
-osThreadId_t defaultTaskHandle;
-const osThreadAttr_t defaultTask_attributes = {
-  .name = "defaultTask",
-  .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityNormal,
+/* Definitions for BLETask */
+osThreadId_t BLETaskHandle;
+uint32_t BLETaskBuffer[ 128 ];
+osStaticThreadDef_t BLETaskControlBlock;
+const osThreadAttr_t BLETask_attributes = {
+  .name = "BLETask",
+  .cb_mem = &BLETaskControlBlock,
+  .cb_size = sizeof(BLETaskControlBlock),
+  .stack_mem = &BLETaskBuffer[0],
+  .stack_size = sizeof(BLETaskBuffer),
+  .priority = (osPriority_t) osPriorityHigh2,
 };
 /* Definitions for boatSMTask */
 osThreadId_t boatSMTaskHandle;
@@ -138,7 +143,7 @@ const osThreadAttr_t depthDetectTask_attributes = {
   .cb_size = sizeof(depthDetectTaskControlBlock),
   .stack_mem = &depthDetectTaskBuffer[0],
   .stack_size = sizeof(depthDetectTaskBuffer),
-  .priority = (osPriority_t) osPriorityLow,
+  .priority = (osPriority_t) osPriorityHigh4,
 };
 /* Definitions for readDataTask */
 osThreadId_t readDataTaskHandle;
@@ -197,6 +202,14 @@ const osTimerAttr_t timerSensorRead_attributes = {
   .cb_mem = &timerSensorReadControlBlock,
   .cb_size = sizeof(timerSensorReadControlBlock),
 };
+/* Definitions for timerBLEUpdate */
+osTimerId_t timerBLEUpdateHandle;
+osStaticTimerDef_t timerBLEUpdateControlBlock;
+const osTimerAttr_t timerBLEUpdate_attributes = {
+  .name = "timerBLEUpdate",
+  .cb_mem = &timerBLEUpdateControlBlock,
+  .cb_size = sizeof(timerBLEUpdateControlBlock),
+};
 /* Definitions for mutexSystemInfo */
 osMutexId_t mutexSystemInfoHandle;
 osStaticMutexDef_t mutexSystemInfoControlBlock;
@@ -245,7 +258,7 @@ static void MX_USB_OTG_FS_PCD_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_TIM3_Init(void);
 static void MX_USART1_UART_Init(void);
-void StartDefaultTask(void *argument);
+void StartBLETask(void *argument);
 void StartTaskBoatSM(void *argument);
 void StartTaskDepthDetect(void *argument);
 void StartTaskReadData(void *argument);
@@ -253,6 +266,7 @@ void StartTaskSendData(void *argument);
 void StartTaskMotorTmout(void *argument);
 void callbackMotorTimeout(void *argument);
 void callbackSensorRead(void *argument);
+void callbackBLEUpdate(void *argument);
 
 /* USER CODE BEGIN PFP */
 void initMotorStates(void);
@@ -275,6 +289,7 @@ int _write(int file, char *ptr, int len) {
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
     if (GPIO_Pin == VL53L0X_GPIO1_EXTI7_Pin)
     {
+    	printf("Depth ISR triggered\n");
     	// If we triggered the ToF sensor ISR, mark as ready and unblock the depth detection task
     	vl53l0x_set_isr_flag();
 
@@ -282,6 +297,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
     	{
 			// Unblock thread flags task
 			osThreadFlagsSet(depthDetectTaskHandle, THREAD_FLAG_DEPTH_READING_READY);
+			printf("Task unblocked\n");
     	}
     }
 }
@@ -359,6 +375,9 @@ int main(void)
   /* creation of timerSensorRead */
   timerSensorReadHandle = osTimerNew(callbackSensorRead, osTimerPeriodic, NULL, &timerSensorRead_attributes);
 
+  /* creation of timerBLEUpdate */
+//  timerBLEUpdateHandle = osTimerNew(callbackBLEUpdate, osTimerPeriodic, NULL, &timerBLEUpdate_attributes);
+
   /* USER CODE BEGIN RTOS_TIMERS */
   /* start timers, add new ones, ... */
 //  if(osTimerStart(timerBLEUpdateHandle, 10) != osOK)
@@ -376,8 +395,8 @@ int main(void)
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
-  /* creation of defaultTask */
-  defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
+  /* creation of BLETask */
+  BLETaskHandle = osThreadNew(StartBLETask, NULL, &BLETask_attributes);
 
   /* creation of boatSMTask */
   boatSMTaskHandle = osThreadNew(StartTaskBoatSM, NULL, &boatSMTask_attributes);
@@ -1127,20 +1146,21 @@ char* system_info_to_json(const SystemInformation_t* info, char* json_buffer, si
 
 /* USER CODE END 4 */
 
-/* USER CODE BEGIN Header_StartDefaultTask */
+/* USER CODE BEGIN Header_StartBLETask */
 /**
-  * @brief  Function implementing the defaultTask thread.
+  * @brief  Function implementing the BLETaskask thread.
   * @param  argument: Not used
   * @retval None
   */
-/* USER CODE END Header_StartDefaultTask */
-void StartDefaultTask(void *argument)
+/* USER CODE END Header_StartBLETask */
+void StartBLETask(void *argument)
 {
   /* USER CODE BEGIN 5 */
   /* Infinite loop */
   for(;;)
   {
-    osDelay(1);
+	  osThreadFlagsWait(0x0001, osFlagsWaitAny, osWaitForever);
+	  MX_BlueNRG_MS_Process();
   }
   /* USER CODE END 5 */
 }
@@ -1224,9 +1244,24 @@ void StartTaskDepthDetect(void *argument)
   /* Infinite loop */
   for(;;)
   {
-	  vl53l0x_prepare_sample(tof_intf);
-	  osThreadFlagsWait(THREAD_FLAG_DEPTH_READING_READY, osFlagsWaitAll, osWaitForever);
-	  vl53l0x_read_range_single(tof_intf, &range, false);
+	  if (vl53l0x_prepare_sample(tof_intf) != HAL_OK)
+	  {
+		  printf("Failed to prepare sample\n");
+	  }
+	  else
+	  {
+		  printf("Prepared sample, waiting for ISR\n");
+	  }
+	  if (osThreadFlagsWait(THREAD_FLAG_DEPTH_READING_READY, osFlagsWaitAll, 1000) == osFlagsErrorTimeout)
+	  {
+		  // Flag timeout
+		  printf("Timeout\n");
+		  vl53l0x_read_range_single(tof_intf, &range, true);
+	  }
+	  else
+	  {
+		  vl53l0x_read_range_single(tof_intf, &range, false);
+	  }
 	  printf("Depth range: %d\n", range);
   }
   /* USER CODE END StartTaskDepthDetect */
@@ -1324,6 +1359,14 @@ void callbackSensorRead(void *argument)
   /* USER CODE BEGIN callbackSensorRead */
 
   /* USER CODE END callbackSensorRead */
+}
+
+/* callbackBLEUpdate function */
+void callbackBLEUpdate(void *argument)
+{
+  /* USER CODE BEGIN callbackBLEUpdate */
+	osThreadFlagsSet(BLETaskHandle, 0x0001);
+  /* USER CODE END callbackBLEUpdate */
 }
 
 /**
