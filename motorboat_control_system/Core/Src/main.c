@@ -26,7 +26,7 @@
 #include <stdbool.h>
 #include <string.h>
 #include <stdio.h>
-//#include "vl53l0x_driver.h"
+#include "vl53l0x_driver.h"
 #include "app_bluenrg_ms.h"
 /* USER CODE END Includes */
 
@@ -396,7 +396,7 @@ int main(void)
   sendDataTaskHandle = osThreadNew(StartTaskSendData, NULL, &sendDataTask_attributes);
 
   /* creation of motorTmoutTask */
-  //motorTmoutTaskHandle = osThreadNew(StartTaskMotorTmout, NULL, &motorTmoutTask_attributes);
+  motorTmoutTaskHandle = osThreadNew(StartTaskMotorTmout, NULL, &motorTmoutTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -961,7 +961,7 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pin = LSM3MDL_DRDY_EXTI8_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+  HAL_GPIO_Init(LSM3MDL_DRDY_EXTI8_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : SPBTLE_RF_RST_Pin */
   GPIO_InitStruct.Pin = SPBTLE_RF_RST_Pin;
