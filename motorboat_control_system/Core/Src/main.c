@@ -316,30 +316,12 @@ int main(void)
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
   MX_BlueNRG_MS_Init();
+
   VL53l0X_Interface_t *interface = vl53l0x_init(&hi2c2, 0x52, VL53L0X_XSHUT_GPIO_Port, VL53L0X_XSHUT_Pin);
-  if (interface != NULL)
+  if (interface == NULL)
   {
-	  uint16_t range;
-	  while (1)
-	  {
-		  if (vl53l0x_read_range_single(interface, &range) == HAL_OK)
-		  {
-			  // if range == 8190, sensor is out of range...
-			  printf("range: %d\n", range);
-		  }
-		  else
-		  {
-			  printf("failure...\n");
-		  }
-
-//		  HAL_Delay(1000);
-	  }
-
-  }
-  else
-  {
-	  printf("oof\n");
-	  while (1);
+	  printf("Failed to initialize VL53L0X\n");
+	  Error_Handler();
   }
   /* USER CODE END 2 */
 
