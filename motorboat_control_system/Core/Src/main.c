@@ -65,22 +65,25 @@ typedef struct {
 } MotorState_t;
 
 typedef struct {
-  Direction_t direction;
+  Direction_t direction: 2;
+  bool timeout: 1;
+  uint8_t reserved : 5; // for alignment
   uint16_t duty_cycle;
-  bool timeout;
 } MotorStatus_t;
 
 #define NUM_MOTORS 4
 #define NUM_SPARE_MOTORS 1
 
 typedef struct {
-  BoatState_t boat_state;
-  bool control_active;
-  bool collision_detected;
-  bool depth_exceeded;
-  bool anchor_lifted;
+  BoatState_t boat_state: 2;
+  bool control_active: 1;
+  bool collision_detected: 1;
+  bool depth_exceeded: 1;
+  bool anchor_lifted: 1;
+  uint8_t reserved : 1; // for alignment
   uint16_t depth_mm;
-  uint8_t tilt_deg;
+  int8_t tilt_roll;
+  int8_t tilt_pitch;
   MotorStatus_t motor_statuses[NUM_MOTORS + NUM_SPARE_MOTORS];
 } SystemInformation_t;
 /* USER CODE END PTD */
@@ -90,9 +93,9 @@ typedef struct {
 #define THREAD_FLAG_DRIVING 0x1
 #define THREAD_FLAG_DEPTH_READING_READY 0x1
 
-#define RAD_2_DEG(x) ((x) * 180 / 3.14159265f)
 #define DEPTH_RANGE_MAXIMUM_MM                1000 // 1m
 #define ACCEL_SAMPLING_RATE                   100 // 10 Hz
+#define MAX_REPORTED_TILT_DEG                 120 // within u8
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -100,6 +103,10 @@ typedef struct {
 // Convert convert 16-bit duty cycle value to correct timer CRR using PWM frequency
 #define DUTY_TO_CCR(duty_cycle_16bit) \
     (((uint32_t)(duty_cycle_16bit) * TIM_ARR) / 65535)
+
+#define RAD_2_DEG(x) ((x) * 180 / 3.14159265f)
+#define SIGN(x) ((x) >= 0 ? 1 : -1)
+#define CLAMP(x, _max_) ((SIGN(x)) * ((x) > (_max_) ? (_max_) : x))
 
 /* USER CODE END PM */
 
@@ -1421,15 +1428,32 @@ void StartTiltDetection(void *argument)
 {
   /* USER CODE BEGIN StartTiltDetection */
   int16_t accel_buf[3];
-  float tilt;
+  float roll, pitch;
   uint32_t tick = osKernelGetTickCount();
   /* Infinite loop */
   for(;;)
   {
     tick += ACCEL_SAMPLING_RATE;
     BSP_ACCELERO_AccGetXYZ(accel_buf);
-    tilt = RAD_2_DEG(atan2(accel_buf[1], accel_buf[2]));
-    printf("%.3f\n", tilt);
+
+    // Roll
+    roll = RAD_2_DEG(atan2(accel_buf[1], accel_buf[2]));
+
+    // Pitch
+    pitch = RAD_2_DEG(
+      atan2(
+        -accel_buf[0], 
+        sqrtf(accel_buf[1]*accel_buf[1] + accel_buf[2]*accel_buf[2])
+      )
+    );
+
+    printf("%.3f %.3f\n", roll, pitch);
+
+    osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
+    system_information.tilt_roll = CLAMP(roll, MAX_REPORTED_TILT_DEG);
+    system_information.tilt_pitch = CLAMP(pitch, MAX_REPORTED_TILT_DEG);
+    osMutexRelease(mutexSystemInfoHandle);
+    
     osDelayUntil(tick);
   }
   /* USER CODE END StartTiltDetection */
