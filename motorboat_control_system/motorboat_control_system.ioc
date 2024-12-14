@@ -2,12 +2,12 @@
 CAD.formats=
 CAD.pinconfig=
 CAD.provider=
-FREERTOS.FootprintOK=false
+FREERTOS.FootprintOK=true
 FREERTOS.IPParameters=Tasks01,configUSE_PREEMPTION,FootprintOK,Queues01,configTOTAL_HEAP_SIZE,Mutexes01,Timers01,configUSE_NEWLIB_REENTRANT
 FREERTOS.Mutexes01=mutexSystemInfo,Static,mutexSystemInfoControlBlock,Depleted;mutexMotorState,Static,mutexMotorStateControlBlock,Available
 FREERTOS.Queues01=queueBoatCommand,1,BoatCommand_t,0,Dynamic,NULL,NULL
-FREERTOS.Tasks01=defaultTask,24,128,StartDefaultTask,Default,NULL,Dynamic,NULL,NULL;boatSMTask,8,128,StartTaskBoatSM,Default,NULL,Static,boatSMTaskBuffer,boatSMTaskControlBlock;depthDetectTask,8,128,StartTaskDepthDetect,Default,NULL,Static,depthDetectTaskBuffer,depthDetectTaskControlBlock;readDataTask,8,128,StartTaskReadData,Default,NULL,Static,readDataTaskBuffer,readDataTaskControlBlock;sendDataTask,8,128,StartTaskSendData,Default,NULL,Static,sendDataTaskBuffer,sendDataTaskControlBlock;motorTmoutTask,8,128,StartTaskMotorTmout,Default,NULL,Static,motorTmoutTaskBuffer,motorTmoutTaskControlBlock
-FREERTOS.Timers01=timerMotorTimeout,callbackMotorTimeout,osTimerPeriodic,Default,NULL,Static,motorTimerControlBlock;timerSensorRead,callbackSensorRead,osTimerPeriodic,Default,NULL,Static,timerSensorReadControlBlock
+FREERTOS.Tasks01=defaultTask,24,128,StartDefaultTask,Default,NULL,Dynamic,NULL,NULL;boatSMTask,8,128,StartTaskBoatSM,Default,NULL,Static,boatSMTaskBuffer,boatSMTaskControlBlock;depthDetectTask,8,128,StartTaskDepthDetect,Default,NULL,Static,depthDetectTaskBuffer,depthDetectTaskControlBlock;readDataTask,41,128,StartTaskReadData,Default,NULL,Static,readDataTaskBuffer,readDataTaskControlBlock;sendDataTask,40,128,StartTaskSendData,Default,NULL,Static,sendDataTaskBuffer,sendDataTaskControlBlock;motorTmoutTask,8,128,StartTaskMotorTmout,Default,NULL,Static,motorTmoutTaskBuffer,motorTmoutTaskControlBlock;BLETask,42,128,StartBLETask,Default,NULL,Static,BLETaskBuffer,BLETaskControlBlock
+FREERTOS.Timers01=timerMotorTimeout,callbackMotorTimeout,osTimerPeriodic,Default,NULL,Static,motorTimerControlBlock;timerSensorRead,callbackSensorRead,osTimerPeriodic,Default,NULL,Static,timerSensorReadControlBlock;timerBLEUpdate,callbackBLEUpdate,osTimerPeriodic,Default,NULL,Static,timerBLEUpdateControlBlock
 FREERTOS.configTOTAL_HEAP_SIZE=2048
 FREERTOS.configUSE_NEWLIB_REENTRANT=0
 FREERTOS.configUSE_PREEMPTION=1

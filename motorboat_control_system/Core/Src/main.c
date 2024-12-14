@@ -28,6 +28,8 @@
 #include <stdio.h>
 #include "vl53l0x_driver.h"
 #include "app_bluenrg_ms.h"
+#include "sample_service.h"
+#include "hci_tl.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -147,7 +149,7 @@ const osThreadAttr_t readDataTask_attributes = {
   .cb_size = sizeof(readDataTaskControlBlock),
   .stack_mem = &readDataTaskBuffer[0],
   .stack_size = sizeof(readDataTaskBuffer),
-  .priority = (osPriority_t) osPriorityLow,
+  .priority = (osPriority_t) osPriorityHigh1,
 };
 /* Definitions for sendDataTask */
 osThreadId_t sendDataTaskHandle;
@@ -159,7 +161,7 @@ const osThreadAttr_t sendDataTask_attributes = {
   .cb_size = sizeof(sendDataTaskControlBlock),
   .stack_mem = &sendDataTaskBuffer[0],
   .stack_size = sizeof(sendDataTaskBuffer),
-  .priority = (osPriority_t) osPriorityLow,
+  .priority = (osPriority_t) osPriorityHigh,
 };
 /* Definitions for motorTmoutTask */
 osThreadId_t motorTmoutTaskHandle;
@@ -172,6 +174,18 @@ const osThreadAttr_t motorTmoutTask_attributes = {
   .stack_mem = &motorTmoutTaskBuffer[0],
   .stack_size = sizeof(motorTmoutTaskBuffer),
   .priority = (osPriority_t) osPriorityLow,
+};
+/* Definitions for BLETask */
+osThreadId_t BLETaskHandle;
+uint32_t BLETaskBuffer[ 128 ];
+osStaticThreadDef_t BLETaskControlBlock;
+const osThreadAttr_t BLETask_attributes = {
+  .name = "BLETask",
+  .cb_mem = &BLETaskControlBlock,
+  .cb_size = sizeof(BLETaskControlBlock),
+  .stack_mem = &BLETaskBuffer[0],
+  .stack_size = sizeof(BLETaskBuffer),
+  .priority = (osPriority_t) osPriorityHigh2,
 };
 /* Definitions for queueBoatCommand */
 osMessageQueueId_t queueBoatCommandHandle;
@@ -193,6 +207,14 @@ const osTimerAttr_t timerSensorRead_attributes = {
   .name = "timerSensorRead",
   .cb_mem = &timerSensorReadControlBlock,
   .cb_size = sizeof(timerSensorReadControlBlock),
+};
+/* Definitions for timerBLEUpdate */
+osTimerId_t timerBLEUpdateHandle;
+osStaticTimerDef_t timerBLEUpdateControlBlock;
+const osTimerAttr_t timerBLEUpdate_attributes = {
+  .name = "timerBLEUpdate",
+  .cb_mem = &timerBLEUpdateControlBlock,
+  .cb_size = sizeof(timerBLEUpdateControlBlock),
 };
 /* Definitions for mutexSystemInfo */
 osMutexId_t mutexSystemInfoHandle;
@@ -247,8 +269,10 @@ void StartTaskDepthDetect(void *argument);
 void StartTaskReadData(void *argument);
 void StartTaskSendData(void *argument);
 void StartTaskMotorTmout(void *argument);
+void StartBLETask(void *argument);
 void callbackMotorTimeout(void *argument);
 void callbackSensorRead(void *argument);
+void callbackBLEUpdate(void *argument);
 
 /* USER CODE BEGIN PFP */
 void initMotorStates(void);
@@ -349,8 +373,15 @@ int main(void)
   /* creation of timerSensorRead */
   timerSensorReadHandle = osTimerNew(callbackSensorRead, osTimerPeriodic, NULL, &timerSensorRead_attributes);
 
+  /* creation of timerBLEUpdate */
+  timerBLEUpdateHandle = osTimerNew(callbackBLEUpdate, osTimerPeriodic, NULL, &timerBLEUpdate_attributes);
+
   /* USER CODE BEGIN RTOS_TIMERS */
   /* start timers, add new ones, ... */
+  if(osTimerStart(timerBLEUpdateHandle, 10) != osOK)
+  {
+	  Error_Handler();
+  }
   /* USER CODE END RTOS_TIMERS */
 
   /* Create the queue(s) */
@@ -379,6 +410,9 @@ int main(void)
 
   /* creation of motorTmoutTask */
   motorTmoutTaskHandle = osThreadNew(StartTaskMotorTmout, NULL, &motorTmoutTask_attributes);
+
+  /* creation of BLETask */
+  BLETaskHandle = osThreadNew(StartBLETask, NULL, &BLETask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -1243,9 +1277,14 @@ void StartTaskSendData(void *argument)
 {
   /* USER CODE BEGIN StartTaskSendData */
   /* Infinite loop */
+    long loop = 0;
+	char str_temp[20];
   for(;;)
   {
-	  MX_BlueNRG_MS_Process();
+	  snprintf(str_temp, sizeof(str_temp), "Iter = %ld", loop);
+	  sendData((uint8_t *)str_temp, sizeof(str_temp));
+	  loop++;
+	  osDelay(100);
   }
   /* USER CODE END StartTaskSendData */
 }
@@ -1287,6 +1326,25 @@ void StartTaskMotorTmout(void *argument)
   /* USER CODE END StartTaskMotorTmout */
 }
 
+/* USER CODE BEGIN Header_StartBLETask */
+/**
+* @brief Function implementing the BLETask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartBLETask */
+void StartBLETask(void *argument)
+{
+  /* USER CODE BEGIN StartBLETask */
+  /* Infinite loop */
+  for(;;)
+  {
+	  osThreadFlagsWait(0x0001, osFlagsWaitAny, osWaitForever);
+	  MX_BlueNRG_MS_Process();
+  }
+  /* USER CODE END StartBLETask */
+}
+
 /* callbackMotorTimeout function */
 void callbackMotorTimeout(void *argument)
 {
@@ -1301,6 +1359,14 @@ void callbackSensorRead(void *argument)
   /* USER CODE BEGIN callbackSensorRead */
 
   /* USER CODE END callbackSensorRead */
+}
+
+/* callbackBLEUpdate function */
+void callbackBLEUpdate(void *argument)
+{
+  /* USER CODE BEGIN callbackBLEUpdate */
+	osThreadFlagsSet(BLETaskHandle, 0x0001);
+  /* USER CODE END callbackBLEUpdate */
 }
 
 /**
