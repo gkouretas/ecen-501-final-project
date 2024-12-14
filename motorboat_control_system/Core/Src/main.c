@@ -109,17 +109,12 @@ UART_HandleTypeDef huart1;
 
 PCD_HandleTypeDef hpcd_USB_OTG_FS;
 
-/* Definitions for BLETask */
-osThreadId_t BLETaskHandle;
-uint32_t BLETaskBuffer[ 128 ];
-osStaticThreadDef_t BLETaskControlBlock;
-const osThreadAttr_t BLETask_attributes = {
-  .name = "BLETask",
-  .cb_mem = &BLETaskControlBlock,
-  .cb_size = sizeof(BLETaskControlBlock),
-  .stack_mem = &BLETaskBuffer[0],
-  .stack_size = sizeof(BLETaskBuffer),
-  .priority = (osPriority_t) osPriorityHigh2,
+/* Definitions for defaultTask */
+osThreadId_t defaultTaskHandle;
+const osThreadAttr_t defaultTask_attributes = {
+  .name = "defaultTask",
+  .stack_size = 128 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for boatSMTask */
 osThreadId_t boatSMTaskHandle;
@@ -143,7 +138,7 @@ const osThreadAttr_t depthDetectTask_attributes = {
   .cb_size = sizeof(depthDetectTaskControlBlock),
   .stack_mem = &depthDetectTaskBuffer[0],
   .stack_size = sizeof(depthDetectTaskBuffer),
-  .priority = (osPriority_t) osPriorityHigh4,
+  .priority = (osPriority_t) osPriorityLow,
 };
 /* Definitions for readDataTask */
 osThreadId_t readDataTaskHandle;
@@ -270,7 +265,7 @@ static void MX_USB_OTG_FS_PCD_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_TIM3_Init(void);
 static void MX_USART1_UART_Init(void);
-void StartBLETask(void *argument);
+void StartDefaultTask(void *argument);
 void StartTaskBoatSM(void *argument);
 void StartTaskDepthDetect(void *argument);
 void StartTaskReadData(void *argument);
@@ -408,8 +403,8 @@ int main(void)
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
-  /* creation of BLETask */
-  BLETaskHandle = osThreadNew(StartBLETask, NULL, &BLETask_attributes);
+  /* creation of defaultTask */
+  defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
 
   /* creation of boatSMTask */
   boatSMTaskHandle = osThreadNew(StartTaskBoatSM, NULL, &boatSMTask_attributes);
@@ -1162,14 +1157,14 @@ char* system_info_to_json(const SystemInformation_t* info, char* json_buffer, si
 
 /* USER CODE END 4 */
 
-/* USER CODE BEGIN Header_StartBLETask */
+/* USER CODE BEGIN Header_StartDefaultTask */
 /**
-  * @brief  Function implementing the BLETaskask thread.
+  * @brief  Function implementing the defaultTask thread.
   * @param  argument: Not used
   * @retval None
   */
-/* USER CODE END Header_StartBLETask */
-void StartBLETask(void *argument)
+/* USER CODE END Header_StartDefaultTask */
+void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN 5 */
   /* Infinite loop */
@@ -1363,10 +1358,10 @@ void StartTaskMotorTmout(void *argument)
 
 /* USER CODE BEGIN Header_StartBLETask */
 /**
-* @brief Function implementing the BLETask thread.
-* @param argument: Not used
-* @retval None
-*/
+  * @brief  Function implementing the BLETaskask thread.
+  * @param  argument: Not used
+  * @retval None
+  */
 /* USER CODE END Header_StartBLETask */
 void StartBLETask(void *argument)
 {
