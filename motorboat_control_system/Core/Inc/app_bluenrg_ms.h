@@ -26,6 +26,8 @@
 
 /* Includes ------------------------------------------------------------------*/
 
+#include "stm32l475e_iot01.h"
+
 /* Exported Functions --------------------------------------------------------*/
 void MX_BlueNRG_MS_Init(void);
 void MX_BlueNRG_MS_Process(void);

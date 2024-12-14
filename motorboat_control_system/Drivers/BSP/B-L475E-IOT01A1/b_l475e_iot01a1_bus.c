@@ -269,11 +269,11 @@ __weak HAL_StatusTypeDef MX_SPI3_Init(SPI_HandleTypeDef* hspi)
   hspi->Instance = SPI3;
   hspi->Init.Mode = SPI_MODE_MASTER;
   hspi->Init.Direction = SPI_DIRECTION_2LINES;
-  hspi->Init.DataSize = SPI_DATASIZE_4BIT;
+  hspi->Init.DataSize = SPI_DATASIZE_8BIT;
   hspi->Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi->Init.CLKPhase = SPI_PHASE_1EDGE;
   hspi->Init.NSS = SPI_NSS_SOFT;
-  hspi->Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_2;
+  hspi->Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_16;
   hspi->Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi->Init.TIMode = SPI_TIMODE_DISABLE;
   hspi->Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;

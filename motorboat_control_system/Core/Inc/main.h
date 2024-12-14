@@ -30,7 +30,6 @@ extern "C" {
 #include "stm32l4xx_hal.h"
 
 #include "hci_tl_interface.h"
-#include "b_l475e_iot01a1.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
@@ -51,6 +50,8 @@ extern "C" {
 
 /* USER CODE END EM */
 
+void HAL_TIM_MspPostInit(TIM_HandleTypeDef *htim);
+
 /* Exported functions prototypes ---------------------------------------------*/
 void Error_Handler(void);
 
@@ -59,9 +60,9 @@ int _write(int file, char *ptr, int len);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#define TIM_ARR 4
+#define TIM_PSC 799
 #define PWM_FREQ 20000
-#define TIM1_PSC 799
-#define TIM1_ARR 4
 #define M24SR64_Y_RF_DISABLE_Pin GPIO_PIN_2
 #define M24SR64_Y_RF_DISABLE_GPIO_Port GPIOE
 #define USB_OTG_FS_OVRCR_EXTI3_Pin GPIO_PIN_3
@@ -88,18 +89,12 @@ int _write(int file, char *ptr, int len);
 #define ARD_A2_GPIO_Port GPIOC
 #define ARD_D1_Pin GPIO_PIN_0
 #define ARD_D1_GPIO_Port GPIOA
-#define ARD_D0_Pin GPIO_PIN_1
-#define ARD_D0_GPIO_Port GPIOA
-#define ARD_D10_Pin GPIO_PIN_2
-#define ARD_D10_GPIO_Port GPIOA
 #define ARD_D4_Pin GPIO_PIN_3
 #define ARD_D4_GPIO_Port GPIOA
 #define ARD_D7_Pin GPIO_PIN_4
 #define ARD_D7_GPIO_Port GPIOA
 #define ARD_D13_Pin GPIO_PIN_5
 #define ARD_D13_GPIO_Port GPIOA
-#define ARD_D12_Pin GPIO_PIN_6
-#define ARD_D12_GPIO_Port GPIOA
 #define ARD_D11_Pin GPIO_PIN_7
 #define ARD_D11_GPIO_Port GPIOA
 #define ARD_A1_Pin GPIO_PIN_4
@@ -187,8 +182,6 @@ int _write(int file, char *ptr, int len);
 #define SYS_JTMS_SWDIO_GPIO_Port GPIOA
 #define SYS_JTCK_SWCLK_Pin GPIO_PIN_14
 #define SYS_JTCK_SWCLK_GPIO_Port GPIOA
-#define ARD_D9_Pin GPIO_PIN_15
-#define ARD_D9_GPIO_Port GPIOA
 #define INTERNAL_SPI3_SCK_Pin GPIO_PIN_10
 #define INTERNAL_SPI3_SCK_GPIO_Port GPIOC
 #define INTERNAL_SPI3_MISO_Pin GPIO_PIN_11

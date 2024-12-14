@@ -36,8 +36,8 @@
 #define HCI_TL_SPI_IRQ_PORT   GPIOE
 #define HCI_TL_SPI_IRQ_PIN    GPIO_PIN_6
 
-#define HCI_TL_SPI_CS_PORT    GPIOB
-#define HCI_TL_SPI_CS_PIN     GPIO_PIN_5
+#define HCI_TL_SPI_CS_PORT    GPIOD
+#define HCI_TL_SPI_CS_PIN     GPIO_PIN_13
 
 #define HCI_TL_RST_PORT       GPIOA
 #define HCI_TL_RST_PIN        GPIO_PIN_8
