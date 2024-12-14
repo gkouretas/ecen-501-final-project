@@ -253,7 +253,10 @@ void hci_tl_lowlevel_init(void)
   HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
 
   /* USER CODE BEGIN hci_tl_lowlevel_init 3 */
-
+  // Set to priority 5, since this is the highest we can go for FreeRTOS compatibility
+  // (Technically it is the value configured in but I don't want to include the config header here in case it gets removed during code gen)
+  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 5, 0); 
+  HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
   /* USER CODE END hci_tl_lowlevel_init 3 */
 
 }

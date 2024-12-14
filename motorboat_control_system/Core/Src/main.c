@@ -28,12 +28,14 @@
 #include <stdio.h>
 #include "vl53l0x_driver.h"
 #include "app_bluenrg_ms.h"
+#include "semphr.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 typedef StaticTask_t osStaticThreadDef_t;
 typedef StaticTimer_t osStaticTimerDef_t;
 typedef StaticSemaphore_t osStaticMutexDef_t;
+typedef StaticSemaphore_t osStaticSemaphoreDef_t;
 /* USER CODE BEGIN PTD */
 typedef enum {
 	kBoatIdle = 0,
@@ -82,6 +84,7 @@ typedef struct {
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define THREAD_FLAG_DRIVING 0x1
+#define THREAD_FLAG_DEPTH_READING_READY 0x1
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -210,7 +213,16 @@ const osMutexAttr_t mutexMotorState_attributes = {
   .cb_mem = &mutexMotorStateControlBlock,
   .cb_size = sizeof(mutexMotorStateControlBlock),
 };
+/* Definitions for myBinarySem01 */
+osSemaphoreId_t myBinarySem01Handle;
+osStaticSemaphoreDef_t myBinarySem01ControlBlock;
+const osSemaphoreAttr_t myBinarySem01_attributes = {
+  .name = "myBinarySem01",
+  .cb_mem = &myBinarySem01ControlBlock,
+  .cb_size = sizeof(myBinarySem01ControlBlock),
+};
 /* USER CODE BEGIN PV */
+VL53l0X_Interface_t *tof_intf = NULL;
 uint32_t motor_timeout = pdMS_TO_TICKS(2000);
 
 volatile MotorState_t motor_states[NUM_MOTORS + NUM_SPARE_MOTORS];
@@ -273,6 +285,14 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
     if (GPIO_Pin == VL53L0X_GPIO1_EXTI7_Pin)
     {
     	vl53l0x_set_isr_flag();
+
+    	if (depthDetectTaskHandle != NULL)
+    	{
+          BaseType_t xHigherPriorityTaskWoken;
+          xHigherPriorityTaskWoken = pdFALSE;
+          xSemaphoreGiveFromISR( myBinarySem01Handle, &xHigherPriorityTaskWoken );
+          portYIELD_FROM_ISR( xHigherPriorityTaskWoken );
+    	}
     }
 }
 
@@ -317,8 +337,26 @@ int main(void)
   /* USER CODE BEGIN 2 */
   MX_BlueNRG_MS_Init();
 
-  VL53l0X_Interface_t *interface = vl53l0x_init(&hi2c2, 0x52, VL53L0X_XSHUT_GPIO_Port, VL53L0X_XSHUT_Pin);
-  if (interface == NULL)
+  // HAL_NVIC_SetPriority(EXTI0_IRQn, 5, 0);
+  // HAL_NVIC_EnableIRQ(EXTI0_IRQn);
+
+  // HAL_NVIC_SetPriority(EXTI1_IRQn, 5, 0);
+  // HAL_NVIC_EnableIRQ(EXTI1_IRQn);
+
+  // HAL_NVIC_SetPriority(EXTI2_IRQn, 5, 0);
+  // HAL_NVIC_EnableIRQ(EXTI2_IRQn);
+
+  // HAL_NVIC_SetPriority(EXTI3_IRQn, 5, 0);
+  // HAL_NVIC_EnableIRQ(EXTI3_IRQn);
+
+  // HAL_NVIC_SetPriority(EXTI9_5_IRQn, 5, 0);
+  // HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
+
+  // HAL_NVIC_SetPriority(EXTI15_10_IRQn, 5, 0);
+  // HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
+
+  tof_intf = vl53l0x_init(&hi2c2, 0x52, VL53L0X_XSHUT_GPIO_Port, VL53L0X_XSHUT_Pin);
+  if (tof_intf == NULL)
   {
 	  printf("Failed to initialize VL53L0X\n");
 	  Error_Handler();
@@ -337,6 +375,10 @@ int main(void)
   /* USER CODE BEGIN RTOS_MUTEX */
   /* add mutexes, ... */
   /* USER CODE END RTOS_MUTEX */
+
+  /* Create the semaphores(s) */
+  /* creation of myBinarySem01 */
+  myBinarySem01Handle = osSemaphoreNew(1, 1, &myBinarySem01_attributes);
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
   /* add semaphores, ... */
@@ -1209,7 +1251,9 @@ void StartTaskDepthDetect(void *argument)
   /* Infinite loop */
   for(;;)
   {
-    osDelay(1);
+	  vl53l0x_prepare_sample(tof_intf);
+	  xSemaphoreTake(myBinarySem01Handle, portMAX_DELAY);
+	  printf("here2\n");
   }
   /* USER CODE END StartTaskDepthDetect */
 }
@@ -1352,6 +1396,7 @@ void assert_failed(uint8_t *file, uint32_t line)
   /* USER CODE BEGIN 6 */
   /* User can add his own implementation to report the file name and line number,
      ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+	while(1);
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */
