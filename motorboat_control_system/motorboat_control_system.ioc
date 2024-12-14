@@ -12,6 +12,7 @@ FREERTOS.configTOTAL_HEAP_SIZE=2048
 FREERTOS.configUSE_NEWLIB_REENTRANT=0
 FREERTOS.configUSE_PREEMPTION=1
 File.Version=6
+GPIO.groupedBy=Group By Peripherals
 I2C2.IPParameters=Timing
 I2C2.Timing=0x10D19CE4
 KeepUserPlacement=false
