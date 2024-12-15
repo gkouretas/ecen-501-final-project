@@ -69,9 +69,6 @@ class JoystickWidget(QWidget):
     def _get_circle_bounds(self, R: float) -> QRectF:
         return QRectF(-R, -R, 2*R, 2*R)
 
-    def _transmit_commands(self):
-        self._joystick_callback(self.x, -self.y, self._input)
-
     def euclidian_dist(self, p1: QPoint, p2: QPoint):
         return ((p1.x() - p2.x())**2 + (p1.y() - p2.y()) ** 2) ** 0.5
     

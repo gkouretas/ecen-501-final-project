@@ -1,6 +1,8 @@
 import asyncio
 import struct
-
+import numpy as np
+import queue
+import time
 from bleak import (
     BleakScanner, 
     BleakClient, 
@@ -8,8 +10,15 @@ from bleak import (
 )
 
 from thread_safe_queue import ThreadSafeQueue
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import IntEnum
+import logging
+
+logging.basicConfig(level=logging.DEBUG)
+
+class BoatCommandType(IntEnum):
+    COMMAND_MOTION = 0
+    COMMAND_STATE = 1
 
 class BoatState(IntEnum):
     BOAT_IDLE = 0
@@ -23,8 +32,8 @@ class Direction(IntEnum):
     CCW = 1
 
     @staticmethod
-    def from_u8(u8: int) -> "Direction":
-        return Direction(u8 - 1)
+    def from_u2(u2: int) -> "Direction":
+        return Direction(u2 - 1)
     
 @dataclass
 class MotorState:
@@ -50,7 +59,7 @@ class MotorboatPacket:
     timestamp: int
     motor_states: list[MotorState]
 
-class BoatCommandType(IntEnum):
+class BoatRequestedCommand(IntEnum):
     RECOVERY_REQUEST = 0
     ANCHOR_BOAT = 1
 
@@ -62,7 +71,8 @@ class MotorboatBLEListener:
         self._rx_property = rx_property
         
         self._addr: str = address
-        self._data_queue: ThreadSafeQueue[MotorboatPacket] = ThreadSafeQueue(maxsize = 30)
+        self._tx_queue: ThreadSafeQueue[bytes] = ThreadSafeQueue(maxsize = 3)
+        self._rx_queue: ThreadSafeQueue[MotorboatPacket] = ThreadSafeQueue(maxsize = 30)
         
         self._client: BleakClient
         self._tx_uuid: str
@@ -84,7 +94,6 @@ class MotorboatBLEListener:
         uint32_t tick;                                               // 4 bytes
         MotorStatus_t motor_statuses[NUM_MOTORS + NUM_SPARE_MOTORS]; // 10 bytes
         """               
-        print(data) 
         packet = MotorboatPacket(
             boat_state = BoatState(data[0] & 0x03),
             control_active = (data[0] >> 2) & 0x1,
@@ -101,22 +110,40 @@ class MotorboatBLEListener:
                     timeout = (data[i] >> 7) & 0x1,
                     is_alive = data[i+1] & 0x1,
                     is_idle = (data[i+1] >> 1) & 0x1,
-                    direction = Direction.from_u8((data[i+1] >> 2) & 0x3)
+                    direction = Direction.from_u2((data[i+1] >> 2) & 0x3)
                 ) for i in range(9, len(data)-1, 2)
             ]
         )
             
         return packet
         
-    def notification_callback(self, _, data: bytearray):
+    async def _process_data(self, data: bytearray):
+        # TODO: this is too intensive and causes disconnects
+        # need to dispatch elsewhere...
         deserialized_data = self._deserialize_data(data)
         if deserialized_data is None:
             raise BufferError("Invalid data received")
         
-        print(deserialized_data)
-        self._data_queue.put(deserialized_data)
+        self._rx_queue.put(deserialized_data)
+        
+    async def notification_callback(self, _, data: bytearray):
+        asyncio.create_task(self._process_data(data))
+        
+    def send_boat_motion_command(self, angle_rad: float, speed: int):
+        angle = int(angle_rad * 32767 / (np.pi/2))
+        packet = struct.pack('B', BoatCommandType.COMMAND_MOTION) + \
+                struct.pack('h', angle) + \
+                struct.pack('H', speed)
+                
+        try:
+            self._tx_queue.put_nowait(packet)
+        except queue.Full:
+            return
 
-    async def initialize(self, timeout: int = 5) -> bool:
+    def pop_command(self, **kwargs) -> MotorboatPacket:
+        return self._rx_queue.get(**kwargs)
+
+    async def initialize(self, timeout: int = 5, block: bool = False) -> bool:
         if self._addr is None:
             if not await self.find_device(timeout): 
                 print("Failed to find the device")
@@ -126,17 +153,22 @@ class MotorboatBLEListener:
             
         # Connect to the client
         self._client = BleakClient(self._addr, timeout = timeout)
+        print("Attempting to connect to the client")
         await self._client.connect()
         
         if not await self.get_char_uuids():
             print("Failed to get the characteristic UUID's")
             return False
     
-        print(f"{self._tx_uuid} {self._rx_uuid}")
+        print("Dispatching notification listener and writer")
         await self.dispatch_notification_listener()
-        await self.dispatch_writer()
-        while True:
+        asyncio.create_task(self.dispatch_writer()) # don't wait for this one to return
+        
+        if block:
             await asyncio.sleep(1)
+            
+        print("Exiting initialization")
+        return True
     
     async def find_device(self, timeout: int) -> bool:
         print("Scanning for devices")
@@ -159,31 +191,29 @@ class MotorboatBLEListener:
                             self._tx_uuid = char
                         elif property == self._rx_property:
                             self._rx_uuid = char
-                
-        print(f"{self._tx_uuid} {self._rx_uuid}")
-        
+                        
         # Return if we initialized the UUID's for the Tx and Rx characteristics
         return self._tx_uuid is not None and self._rx_uuid is not None
     
     async def dispatch_notification_listener(self):
         # Start notification handler
         await self._client.start_notify(self._rx_uuid, self.notification_callback)
+        
+        # Keep the script running to receive notifications
+        while True:
+            await asyncio.sleep(1)
 
     async def dispatch_writer(self):
-        # raw: 3630D31E1
-        # raw: 000400000
+        # cmd_motion = struct.pack('B', 0) + struct.pack('H', 12342) + struct.pack('H', 7891)
+        # cmd_status = struct.pack('B', 1) + struct.pack('>I', (1 << 24) | 0x0)
 
-        cmd_motion = struct.pack('B', 0) + struct.pack('H', 12342) + struct.pack('H', 7891)
-        cmd_status = struct.pack('B', 1) + struct.pack('>I', (1 << 24) | 0x0)
-
-        c = 0
         while True:
-            c += 1
-            if c % 2 == 0:
-                await self._client.write_gatt_char(self._tx_uuid, cmd_motion)
-            else:
-                await self._client.write_gatt_char(self._tx_uuid, cmd_status)
-            await asyncio.sleep(1)
+            # Wait for tx queue to get populated
+            packet = self._tx_queue.get()
+            print(f"Transmitting packet: {packet}")
+            
+            # Transmit packet to the server
+            await self._client.write_gatt_char(self._tx_uuid, packet)
 
 def main():
     ble_listener = MotorboatBLEListener(

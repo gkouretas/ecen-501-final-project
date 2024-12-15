@@ -1,3 +1,5 @@
+import asyncio
+
 from PyQt5.QtGui import *
 from PyQt5.QtCore import *
 from PyQt5.QtWidgets import *
@@ -8,6 +10,9 @@ from PyQt5.QtWidgets import QApplication
 from boat_scene import BoatVisualizerScene
 from boat_controller import BoatController
 from control_interface import ControlInterface
+from ble_listener import MotorboatBLEListener
+
+from functools import partial
 
 from numpy.typing import NDArray
 
@@ -52,11 +57,24 @@ class BoatGUI(QMainWindow):
         _label.setFont(QFont("Courier", 8, weight = QFont.Weight.Bold))
         
         self._main_widget.layout().addWidget(_label, 1, 0, 1, 2)
+        self._ble_button = QPushButton("Connect to server")
+        self._ble_button.clicked.connect(partial(self.connect_to_ble, controller._ble_comms))
+        self._main_widget.layout().addWidget(self._ble_button, 2, 0, 1, 2)
+        
+    def connect_to_ble(self, comms: MotorboatBLEListener):
+        self._ble_button.setEnabled(False)
+        task = asyncio.create_task(comms.initialize(timeout = 30, block = False))
+        task.add_done_callback(self._connection_complete)
+        
+    def _connection_complete(self, ret: bool):
+        if not ret:
+            print("BLE connection failed")
+            self._ble_button.setEnabled(True)
         
     def run(self):
         self._view.run()
         self.showMaximized()
-        self.app.exec()
+        # self.app.exec()
     
     def keyPressEvent(self, a0):
         self._view.keyPressEvent(a0)

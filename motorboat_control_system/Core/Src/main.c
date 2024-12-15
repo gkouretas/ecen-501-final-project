@@ -26,6 +26,7 @@
 #include <stdbool.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <math.h>
 #include "vl53l0x_driver.h"
 #include "stm32l475e_iot01_accelero.h"
@@ -56,14 +57,16 @@ typedef enum {
 	kAnchorBoat = 1
 } RequestedState_t;
 
+#define RX_BUFFER_SIZE (5)
+
 typedef union __attribute__((packed)) {
 	struct __attribute__((packed)) {
 		BoatCommandType_t cmd_type : 8;
 		union {
 			struct __attribute__((packed)) {
 
-				uint16_t direction; // 0 -> 65536 : Left -> Right
-				uint16_t speed;     // 0 -> 65536 : 0-100% speed
+				int16_t angle;   // (-32767, 32768] -> (-pi, pi]
+				uint16_t speed;  // (0 -> 65536] -> PWM duty cycle
 			} motion;
 			struct __attribute__((packed)) {
 				RequestedState_t state: 8;
@@ -71,7 +74,7 @@ typedef union __attribute__((packed)) {
 			} state;
 		} cmd;
 	} fields;
-	uint8_t buffer[5]; // 5 bytes right now...
+	uint8_t buffer[RX_BUFFER_SIZE]; // 5 bytes right now...
 } BoatCommand_t;
 
 typedef enum {
@@ -95,7 +98,7 @@ typedef struct {
   bool timeout: 1;
   bool is_alive: 1;
   bool is_idle: 1;
-  uint8_t direction: 2; // represent as signed 2-bit int (00: 0, 01: 1, 1x: -1)
+  uint8_t direction: 2; // represent as u2 int (CW: 0, NULL: 1, CCW: 2)
   uint8_t reserved : 4; // for alignment
 } MotorStatus_t; // total size: 2 bytes
 
@@ -134,13 +137,17 @@ typedef union {
 
 #define DEPTH_RANGE_MAXIMUM_MM                1000 // 1m
 #define ACCEL_SAMPLING_RATE                   100 // 10 Hz
-#define BLE_TRANSMISSION_RATE                 500 // 2 Hz. TODO: increase as high as we can...
+#define BLE_TRANSMISSION_RATE                 20  // 50 Hz. TODO: increase as high as we can...
 #define MAX_REPORTED_TILT_DEG                 120 // within u8
 
 #define COMMAND_MSG_QUEUE_PRI                 (10)
 #define COMMAND_MSG_QUEUE_TIMEOUT             (0)    // No timeout
 #define STATE_MSG_QUEUE_PRI                   (10)
 #define STATE_MSG_QUEUE_TIMEOUT               (0) // TODO: set timeout when we start servicing this queue
+
+//#define PWM_MAX_VALUE                         (0x7F)
+#define PWM_MAX_VALUE                         (100)
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -150,9 +157,10 @@ typedef union {
     (((uint32_t)(duty_cycle) * TIM_ARR) / 100)
 
 #define RAD_2_DEG(x) ((x) * 180 / 3.14159265f)
-#define SIGN(x) ((x) >= 0 ? 1 : -1)
+#define SIGN(x) ((x) != 0 ? ((x) >= 0 ? 1 : -1) : 0)
 #define CLAMP(x, _max_) ((SIGN(x)) * ((x) > (_max_) ? (_max_) : x))
-
+#define RESCALE(x, _in_max_, _out_max_) ((x) * (_out_max_) / (_in_max_))
+#define DIRECTION_TO_S2(x) ((x) + 1)
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
@@ -228,7 +236,7 @@ const osThreadAttr_t motorTmoutTask_attributes = {
 };
 /* Definitions for tiltDetectTask */
 osThreadId_t tiltDetectTaskHandle;
-uint32_t tiltDetectionTaBuffer[ 128 ];
+uint32_t tiltDetectionTaBuffer[ 256 ];
 osStaticThreadDef_t tiltDetectionTaControlBlock;
 const osThreadAttr_t tiltDetectTask_attributes = {
   .name = "tiltDetectTask",
@@ -249,6 +257,18 @@ const osThreadAttr_t collisionDetect_attributes = {
   .stack_mem = &collisionDetectBuffer[0],
   .stack_size = sizeof(collisionDetectBuffer),
   .priority = (osPriority_t) osPriorityLow,
+};
+/* Definitions for boatControlTask */
+osThreadId_t boatControlTaskHandle;
+uint32_t boatControlTaskBuffer[ 128 ];
+osStaticThreadDef_t boatControlTaskControlBlock;
+const osThreadAttr_t boatControlTask_attributes = {
+  .name = "boatControlTask",
+  .cb_mem = &boatControlTaskControlBlock,
+  .cb_size = sizeof(boatControlTaskControlBlock),
+  .stack_mem = &boatControlTaskBuffer[0],
+  .stack_size = sizeof(boatControlTaskBuffer),
+  .priority = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for queueBoatCommand */
 osMessageQueueId_t queueBoatCommandHandle;
@@ -283,6 +303,14 @@ const osMutexAttr_t mutexSystemInfo_attributes = {
   .name = "mutexSystemInfo",
   .cb_mem = &mutexSystemInfoControlBlock,
   .cb_size = sizeof(mutexSystemInfoControlBlock),
+};
+/* Definitions for mutexMotorState */
+osMutexId_t mutexMotorStateHandle;
+osStaticMutexDef_t mutexMotorStateControlBlock;
+const osMutexAttr_t mutexMotorState_attributes = {
+  .name = "mutexMotorState",
+  .cb_mem = &mutexMotorStateControlBlock,
+  .cb_size = sizeof(mutexMotorStateControlBlock),
 };
 /* USER CODE BEGIN PV */
 VL53l0X_Interface_t *tof_intf = NULL;
@@ -334,6 +362,7 @@ void StartBLECommTask(void *argument);
 void StartTaskMotorTmout(void *argument);
 void StartTiltDetection(void *argument);
 void startCollisionDetectTask(void *argument);
+void StartBoatControl(void *argument);
 void callbackMotorTimeout(void *argument);
 void callbackSensorRead(void *argument);
 
@@ -446,6 +475,9 @@ int main(void)
   /* creation of mutexSystemInfo */
   mutexSystemInfoHandle = osMutexNew(&mutexSystemInfo_attributes);
 
+  /* creation of mutexMotorState */
+  mutexMotorStateHandle = osMutexNew(&mutexMotorState_attributes);
+
   /* USER CODE BEGIN RTOS_MUTEX */
   /* add mutexes, ... */
   /* USER CODE END RTOS_MUTEX */
@@ -505,6 +537,9 @@ int main(void)
 
   /* creation of collisionDetect */
   collisionDetectHandle = osThreadNew(startCollisionDetectTask, NULL, &collisionDetect_attributes);
+
+  /* creation of boatControlTask */
+  boatControlTaskHandle = osThreadNew(StartBoatControl, NULL, &boatControlTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -1411,7 +1446,7 @@ void StartBLECommTask(void *argument)
 				switch (cmd->fields.cmd_type)
 				{
 					case kCommandMotion:
-//						printf("%d %d %d\n", cmd->fields.cmd_type, cmd->fields.cmd.motion.direction, cmd->fields.cmd.motion.speed);
+						printf("%d %d %d\n", cmd->fields.cmd_type, cmd->fields.cmd.motion.angle, cmd->fields.cmd.motion.speed);
 						// No timeout, just put if there is any space
 						osMessageQueuePut(queueBoatCommandHandle, (void *)cmd->buffer, COMMAND_MSG_QUEUE_PRI, COMMAND_MSG_QUEUE_TIMEOUT);
 						break;
@@ -1531,7 +1566,7 @@ void StartTiltDetection(void *argument)
 /* USER CODE END Header_startCollisionDetectTask */
 void startCollisionDetectTask(void *argument)
 {
-	/* USER CODE BEGIN startCollisionDetectTask */
+  /* USER CODE BEGIN startCollisionDetectTask */
 	/* Infinite loop */
 	uint32_t randNum;
 	for(;;)
@@ -1564,6 +1599,51 @@ void startCollisionDetectTask(void *argument)
 
 	}
   /* USER CODE END startCollisionDetectTask */
+}
+
+/* USER CODE BEGIN Header_StartBoatControl */
+/**
+* @brief Function implementing the boatControlTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartBoatControl */
+void StartBoatControl(void *argument)
+{
+  /* USER CODE BEGIN StartBoatControl */
+  BoatCommand_t command;
+  uint8_t pri;
+  /* Infinite loop */
+  for(;;)
+  {
+    if (osMessageQueueGet(queueBoatCommandHandle, (void *)&command, &pri, osWaitForever) == osOK)
+    {
+      // Once we get a command from the queue, apply it to our motors
+    	osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
+    	// hard-code motor 0 as "angle" motor
+    	system_information.fields.motor_statuses[0].direction = DIRECTION_TO_S2(SIGN(command.fields.cmd.motion.angle));
+		updateMotorDutyCycle(
+			&system_information, 0, abs(RESCALE(command.fields.cmd.motion.angle, UINT16_MAX, PWM_MAX_VALUE))
+		);
+
+		// for now, all thrust motors just go forward
+		system_information.fields.motor_statuses[1].direction = DIRECTION_TO_S2(kDirectionCCW);
+		system_information.fields.motor_statuses[2].direction = DIRECTION_TO_S2(kDirectionCCW);
+		system_information.fields.motor_statuses[3].direction = DIRECTION_TO_S2(kDirectionCCW);
+		updateMotorDutyCycle(
+			&system_information, 1, abs(RESCALE(command.fields.cmd.motion.speed, UINT16_MAX, PWM_MAX_VALUE))
+		);
+		updateMotorDutyCycle(
+			&system_information, 2, abs(RESCALE(command.fields.cmd.motion.speed, UINT16_MAX, PWM_MAX_VALUE))
+		);
+		updateMotorDutyCycle(
+			&system_information, 3, abs(RESCALE(command.fields.cmd.motion.speed, UINT16_MAX, PWM_MAX_VALUE))
+		);
+
+		osMutexRelease(mutexSystemInfoHandle);
+    }
+  }
+  /* USER CODE END StartBoatControl */
 }
 
 /* callbackMotorTimeout function */

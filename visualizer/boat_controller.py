@@ -1,15 +1,20 @@
 import numpy as np
-from motor_model import Motor
+import queue
 
+from motor_model import Motor
+from ble_listener import MotorboatBLEListener
 class BoatController:
-    def __init__(self, motor_params: Motor.Params, update_rate: float):
+    def __init__(self, motor_params: Motor.Params, update_rate: float, ble_comms: MotorboatBLEListener):
         self._m1 = Motor(motor_params, update_rate)
         self._m2 = Motor(motor_params, update_rate)
         self._m3 = Motor(motor_params, update_rate)
         self._m4 = Motor(motor_params, update_rate)
         
+        self._ble_comms = ble_comms
+        
         self._dt = update_rate
         
+        self._v_ref = 24.0
         self._v1 = 0.0
         self._v2 = 0.0
         self._v3 = 0.0
@@ -56,22 +61,14 @@ class BoatController:
     def transmit_commands(self, dx: float, dy: float, dz: int):
         # IK, get direction and magnitude
         _do = np.arctan2(dy, dx)
-        _v = dz / 100
+        _v = dz
         
         if abs(dx) < 1e-5: 
             _do = 0.0
         else:
             _do = np.sign(dy) * (_do - (np.sign(dy) * np.pi/2))
-                    
-        # TODO: transmit over BLE.
-        # For now, let's simply apply commands
-        # We assume dx and dy to be normalized here (0, 1)
-        # and our max voltage to be 24
-        self._v1 = (_do / (np.pi/2)) * 24 # Normalize to (0, Vmax)
-        self._v2 = _v * 24
-        self._v3 = _v * 24
-        
-        # self._apply_commands()
+
+        self._ble_comms.send_boat_motion_command(_do, _v)
         
     @property
     def R(self):
@@ -162,7 +159,11 @@ class BoatController:
         return self._velocity
     
     def _apply_commands(self):
-        self._m1.sim(self._v1)
-        self._m2.sim(self._v2)
-        self._m3.sim(self._v3)
-        self._m4.sim(self._v4)
+        try:
+            packet = self._ble_comms.pop_command(block = False, timeout = 0.1)
+        except queue.Empty:
+            return
+        
+        print(f"Received packet from timestamp: {packet.timestamp}")
+        for state, motor in zip(packet.motor_states, [self._m1, self._m2, self._m3, self._m4]):
+            motor.sim(self._v_ref * state.duty_cycle / 100)
