@@ -1315,7 +1315,7 @@ void StartDefaultTask(void *argument)
 /* USER CODE END Header_StartTaskBoatSM */
 void StartTaskBoatSM(void *argument)
 {
-	/* USER CODE BEGIN StartTaskBoatSM */
+  /* USER CODE BEGIN StartTaskBoatSM */
 
 	/* Infinite loop */
 	for(;;)
