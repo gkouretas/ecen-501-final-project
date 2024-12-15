@@ -5,9 +5,10 @@ import queue
 import time
 from bleak import (
     BleakScanner, 
-    BleakClient, 
-    BleakGATTCharacteristic
+    BleakClient
 )
+
+from bleak.exc import BleakDeviceNotFoundError
 
 from thread_safe_queue import ThreadSafeQueue
 from dataclasses import dataclass
@@ -117,20 +118,24 @@ class MotorboatBLEListener:
             
         return packet
         
-    async def _process_data(self, data: bytearray):
+    def _process_data(self, data: bytearray):
         # TODO: this is too intensive and causes disconnects
         # need to dispatch elsewhere...
         deserialized_data = self._deserialize_data(data)
         if deserialized_data is None:
             raise BufferError("Invalid data received")
-        
-        self._rx_queue.put(deserialized_data)
+        try:
+            self._rx_queue.put_nowait(deserialized_data)
+        except queue.Full:
+            print("Rx queue full, ignoring")
+            return
         
     async def notification_callback(self, _, data: bytearray):
-        asyncio.create_task(self._process_data(data))
+        self._process_data(data)
         
-    def send_boat_motion_command(self, angle_rad: float, speed: int):
+    def send_boat_motion_command(self, angle_rad: float, speed_percentage: int):
         angle = int(angle_rad * 32767 / (np.pi/2))
+        speed = int(speed_percentage * 65535 / 100)
         packet = struct.pack('B', BoatCommandType.COMMAND_MOTION) + \
                 struct.pack('h', angle) + \
                 struct.pack('H', speed)
@@ -138,10 +143,11 @@ class MotorboatBLEListener:
         try:
             self._tx_queue.put_nowait(packet)
         except queue.Full:
+            # print("Tx queue full")
             return
 
-    def pop_command(self, **kwargs) -> MotorboatPacket:
-        return self._rx_queue.get(**kwargs)
+    def pop_command(self) -> MotorboatPacket:
+        return self._rx_queue.get_nowait()
 
     async def initialize(self, timeout: int = 5, block: bool = False) -> bool:
         if self._addr is None:
@@ -154,18 +160,22 @@ class MotorboatBLEListener:
         # Connect to the client
         self._client = BleakClient(self._addr, timeout = timeout)
         print("Attempting to connect to the client")
-        await self._client.connect()
+        try:
+            await self._client.connect()
+        except BleakDeviceNotFoundError:
+            print("Unable to find device")
+            return False
         
         if not await self.get_char_uuids():
             print("Failed to get the characteristic UUID's")
             return False
     
         print("Dispatching notification listener and writer")
-        await self.dispatch_notification_listener()
-        asyncio.create_task(self.dispatch_writer()) # don't wait for this one to return
-        
+        writer_task = asyncio.create_task(self.dispatch_writer())
+        notification_task = asyncio.create_task(self.dispatch_notification_listener())
+
         if block:
-            await asyncio.sleep(1)
+            await asyncio.gather(notification_task, writer_task)
             
         print("Exiting initialization")
         return True
@@ -196,24 +206,40 @@ class MotorboatBLEListener:
         return self._tx_uuid is not None and self._rx_uuid is not None
     
     async def dispatch_notification_listener(self):
-        # Start notification handler
-        await self._client.start_notify(self._rx_uuid, self.notification_callback)
+        try:
+            # Start notification handler
+            await self._client.start_notify(self._rx_uuid, self.notification_callback)
+            
+            # Keep the script running to receive notifications
+            while True:
+                print("Yielding read task")
+                await asyncio.sleep(1.0)
         
-        # Keep the script running to receive notifications
-        while True:
-            await asyncio.sleep(1)
+        except Exception as e:
+            print(f"Error during notifications: {e}")
+            raise
+        finally:
+            print("Stopping notifications")
+            await self._client.stop_notify(self._rx_uuid)
+
 
     async def dispatch_writer(self):
         # cmd_motion = struct.pack('B', 0) + struct.pack('H', 12342) + struct.pack('H', 7891)
         # cmd_status = struct.pack('B', 1) + struct.pack('>I', (1 << 24) | 0x0)
-
         while True:
             # Wait for tx queue to get populated
-            packet = self._tx_queue.get()
+            try:
+                packet = self._tx_queue.get_nowait()
+            except queue.Empty:
+                await asyncio.sleep(0) # yield task
+                continue
+            
             print(f"Transmitting packet: {packet}")
             
             # Transmit packet to the server
             await self._client.write_gatt_char(self._tx_uuid, packet)
+            print("Yielding write task")
+            await asyncio.sleep(0) # yield task
 
 def main():
     ble_listener = MotorboatBLEListener(
@@ -224,7 +250,7 @@ def main():
         address = "02:80:E1:00:00:AA"
     )
     
-    asyncio.run(ble_listener.initialize(timeout = 30))
+    asyncio.run(ble_listener.initialize(timeout = 30, block = True))
     
 if __name__ == "__main__":
     main()

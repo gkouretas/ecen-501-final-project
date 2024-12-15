@@ -137,7 +137,7 @@ typedef union {
 
 #define DEPTH_RANGE_MAXIMUM_MM                1000 // 1m
 #define ACCEL_SAMPLING_RATE                   100 // 10 Hz
-#define BLE_TRANSMISSION_RATE                 20  // 50 Hz. TODO: increase as high as we can...
+#define BLE_TRANSMISSION_RATE                 100 // 10 Hz. TODO: increase as high as we can...
 #define MAX_REPORTED_TILT_DEG                 120 // within u8
 
 #define COMMAND_MSG_QUEUE_PRI                 (10)
@@ -1441,7 +1441,7 @@ void StartBLECommTask(void *argument)
 			else
 			{
 				cmd = (BoatCommand_t *)buf_rx;
-				printf("raw: %02X%02X%02X%02X%02X\n", cmd->buffer[0], cmd->buffer[1], cmd->buffer[2], cmd->buffer[3], cmd->buffer[4]);
+//				printf("raw: %02X%02X%02X%02X%02X\n", cmd->buffer[0], cmd->buffer[1], cmd->buffer[2], cmd->buffer[3], cmd->buffer[4]);
 
 				switch (cmd->fields.cmd_type)
 				{
