@@ -154,7 +154,7 @@ typedef union {
 /* USER CODE BEGIN PM */
 // Convert convert 7-bit duty cycle value to correct timer CRR using PWM frequency
 #define DUTY_TO_CCR(duty_cycle) \
-    (((uint32_t)(duty_cycle) * TIM_ARR) / 100)
+    (((uint32_t)(duty_cycle) * (TIM_ARR + 1)) / 100)
 
 #define RAD_2_DEG(x) ((x) * 180 / 3.14159265f)
 #define SIGN(x) ((x) != 0 ? ((x) >= 0 ? 1 : -1) : 0)
@@ -332,11 +332,11 @@ volatile static SystemInformation_t system_information = {
 		  .control_active = false,
 		  .depth_exceeded = false,
 		  .motor_statuses = {
-			  {.timeout = false, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = 0},
-			  {.timeout = false, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = 0},
-			  {.timeout = false, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = 0},
-			  {.timeout = false, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = 0},
-			  {.timeout = false, .is_alive = true, .is_idle = true,  .direction = kDirectionNull, .duty_cycle = 0}
+			  {.timeout = false, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0)},
+			  {.timeout = false, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0)},
+			  {.timeout = false, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0)},
+			  {.timeout = false, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0)},
+			  {.timeout = false, .is_alive = true, .is_idle = true,  .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0)}
 		  }
 	}
 };
@@ -447,6 +447,7 @@ int main(void)
   MX_RNG_Init();
   /* USER CODE BEGIN 2 */
   initMotorPWM(&system_information);
+
   MX_BlueNRG_MS_Init();
 
   if (BSP_ACCELERO_Init() != 0)

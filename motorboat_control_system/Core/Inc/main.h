@@ -60,9 +60,9 @@ int _write(int file, char *ptr, int len);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
-#define TIM_ARR 4
-#define TIM_PSC 799
+#define TIM_ARR 99
 #define PWM_FREQ 20000
+#define TIM_PSC 39
 #define M24SR64_Y_RF_DISABLE_Pin GPIO_PIN_2
 #define M24SR64_Y_RF_DISABLE_GPIO_Port GPIOE
 #define USB_OTG_FS_OVRCR_EXTI3_Pin GPIO_PIN_3
