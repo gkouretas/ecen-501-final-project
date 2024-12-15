@@ -24,6 +24,8 @@ class BoatController:
         self._kv = 1.0
         
         self._ts = 0
+        self._roll = 0.0
+        self._pitch = 0.0
         self._x = 0.0
         self._y = 0.0
         self._velocity = 0.0
@@ -45,6 +47,14 @@ class BoatController:
     @property
     def update_rate(self):
         return self._dt
+    
+    @property
+    def roll(self):
+        return self._roll
+    
+    @property
+    def pitch(self):
+        return self._pitch
         
     def run_kinematics(self):
         self._apply_commands()
@@ -170,6 +180,10 @@ class BoatController:
             return
         
         self._ts = packet.timestamp
+        
+        # Data is already in degrees
+        self._roll = packet.roll
+        self._pitch = packet.pitch
         
         print(f"Received packet from timestamp: {packet.timestamp}")
         for state, motor in zip(packet.motor_states, [self._m1, self._m2, self._m3, self._m4]):

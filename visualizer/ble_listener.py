@@ -101,10 +101,10 @@ class MotorboatBLEListener:
             collision_detected = (data[0] >> 3) & 0x1,
             depth_exceeded = (data[0] >> 4) & 0x1,
             anchor_lifted = (data[0] >> 5) & 0x1,
-            depth = struct.unpack('H', data[1:3]),
-            roll = struct.unpack('b', bytes([data[3]])),
-            pitch = struct.unpack('b', bytes([data[4]])),
-            timestamp = struct.unpack('L', data[5:9]),
+            depth = struct.unpack('H', data[1:3])[0],
+            roll = struct.unpack('b', bytes([data[3]]))[0],
+            pitch = struct.unpack('b', bytes([data[4]]))[0],
+            timestamp = struct.unpack('L', data[5:9])[0],
             motor_states = [
                 MotorState(
                     duty_cycle = (data[i] & 0x7F),

@@ -67,6 +67,7 @@ class BoatGUI(QMainWindow):
         task.add_done_callback(self._connection_complete)
         
     def _connection_complete(self, ret: bool):
+        # TODO: this seems to not work, idk why
         if not ret:
             print("BLE connection failed")
             self._ble_button.setEnabled(True)

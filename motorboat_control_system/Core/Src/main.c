@@ -1446,7 +1446,7 @@ void StartBLECommTask(void *argument)
 				switch (cmd->fields.cmd_type)
 				{
 					case kCommandMotion:
-						printf("%d %d %d\n", cmd->fields.cmd_type, cmd->fields.cmd.motion.angle, cmd->fields.cmd.motion.speed);
+//						printf("%d %d %d\n", cmd->fields.cmd_type, cmd->fields.cmd.motion.angle, cmd->fields.cmd.motion.speed);
 						// No timeout, just put if there is any space
 						osMessageQueuePut(queueBoatCommandHandle, (void *)cmd->buffer, COMMAND_MSG_QUEUE_PRI, COMMAND_MSG_QUEUE_TIMEOUT);
 						break;
@@ -1548,6 +1548,7 @@ void StartTiltDetection(void *argument)
     );
 
     osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
+    // TODO: fix sign
     system_information.fields.tilt_roll = (int8_t)(CLAMP(roll, MAX_REPORTED_TILT_DEG));
     system_information.fields.tilt_pitch = (int8_t)(CLAMP(pitch, MAX_REPORTED_TILT_DEG));
     osMutexRelease(mutexSystemInfoHandle);

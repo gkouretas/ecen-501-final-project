@@ -128,6 +128,8 @@ class BoatVisualizerScene(GLViewWidget):
         painter.drawText(15, 45, f"Y: {self._controller.y:.3f} mm")
         painter.drawText(15, 55, f"Delta: {self._controller.delta:.3f} deg")
         painter.drawText(15, 65, f"Velocity: {self._controller.velocity:.3f} mm/s")
+        painter.drawText(15, 75, f"Roll: {self._controller.roll:.3f} deg")
+        painter.drawText(15, 85, f"Pitch: {self._controller.pitch:.3f} deg")
         
         # End painter
         painter.end()
@@ -147,6 +149,8 @@ class BoatVisualizerScene(GLViewWidget):
         self._boat_mesh_item.setTransform(self._home_tform)
         self._boat_mesh_item.translate(dx = self._controller.x, dy = self._controller.y, dz = 0.0, local = False)
         self._boat_mesh_item.rotate(angle = self._controller.heading, x = 0, y = 0, z = 1, local = True)
+        self._boat_mesh_item.rotate(angle = self._controller.roll, x = 1, y = 0, z = 0, local = True)
+        self._boat_mesh_item.rotate(angle = self._controller.pitch, x = 0, y = 1, z = 0, local = True)
                         
         self.update()
         
