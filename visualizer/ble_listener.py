@@ -50,6 +50,10 @@ class MotorboatPacket:
     timestamp: int
     motor_states: list[MotorState]
 
+class BoatCommandType(IntEnum):
+    RECOVERY_REQUEST = 0
+    ANCHOR_BOAT = 1
+
 class MotorboatBLEListener:
     def __init__(self, device_name: str, service_desc: str, tx_property: str, rx_property: str, address: str = None):
         self._name = device_name
@@ -166,8 +170,19 @@ class MotorboatBLEListener:
         await self._client.start_notify(self._rx_uuid, self.notification_callback)
 
     async def dispatch_writer(self):
+        # raw: 3630D31E1
+        # raw: 000400000
+
+        cmd_motion = struct.pack('B', 0) + struct.pack('H', 12342) + struct.pack('H', 7891)
+        cmd_status = struct.pack('B', 1) + struct.pack('>I', (1 << 24) | 0x0)
+
+        c = 0
         while True:
-            await self._client.write_gatt_char(self._tx_uuid, b"hello")
+            c += 1
+            if c % 2 == 0:
+                await self._client.write_gatt_char(self._tx_uuid, cmd_motion)
+            else:
+                await self._client.write_gatt_char(self._tx_uuid, cmd_status)
             await asyncio.sleep(1)
 
 def main():
