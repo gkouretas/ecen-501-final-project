@@ -26,6 +26,7 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include <stdio.h>
+#include <stdbool.h>
 
 #include "bluenrg_gap.h"
 #include "bluenrg_aci_const.h"
@@ -72,6 +73,13 @@
 /** @addtogroup SAMPLE_SERVICE_Exported_Functions
  *  @{
  */
+#define MAX_RX_BUFFER (20)
+typedef struct {
+	uint8_t buf[MAX_RX_BUFFER];
+	uint8_t n_bytes;
+	bool is_populated;
+} LatestBuffer_t;
+
 tBleStatus Add_Sample_Service(void);
 void Make_Connection(void);
 void receiveData(uint8_t* data_buffer, uint8_t Nb_bytes);
@@ -86,6 +94,7 @@ void GAP_DisconnectionComplete_CB(void);
 void GATT_Notification_CB(uint16_t attr_handle, uint8_t attr_len,
                           uint8_t *attr_value);
 void user_notify(void * pData);
+uint8_t *get_latest_received_sample(uint8_t *n_bytes);
 /**
  * @}
  */

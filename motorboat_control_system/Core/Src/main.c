@@ -164,29 +164,17 @@ const osThreadAttr_t depthDetectTask_attributes = {
   .stack_size = sizeof(depthDetectTaskBuffer),
   .priority = (osPriority_t) osPriorityLow,
 };
-/* Definitions for readDataTask */
-osThreadId_t readDataTaskHandle;
-uint32_t readDataTaskBuffer[ 128 ];
-osStaticThreadDef_t readDataTaskControlBlock;
-const osThreadAttr_t readDataTask_attributes = {
-  .name = "readDataTask",
-  .cb_mem = &readDataTaskControlBlock,
-  .cb_size = sizeof(readDataTaskControlBlock),
-  .stack_mem = &readDataTaskBuffer[0],
-  .stack_size = sizeof(readDataTaskBuffer),
-  .priority = (osPriority_t) osPriorityLow,
-};
-/* Definitions for sendDataTask */
-osThreadId_t sendDataTaskHandle;
-uint32_t sendDataTaskBuffer[ 128 ];
-osStaticThreadDef_t sendDataTaskControlBlock;
-const osThreadAttr_t sendDataTask_attributes = {
-  .name = "sendDataTask",
-  .cb_mem = &sendDataTaskControlBlock,
-  .cb_size = sizeof(sendDataTaskControlBlock),
-  .stack_mem = &sendDataTaskBuffer[0],
-  .stack_size = sizeof(sendDataTaskBuffer),
-  .priority = (osPriority_t) osPriorityLow,
+/* Definitions for serviceBLETask */
+osThreadId_t serviceBLETaskHandle;
+uint32_t serviceBLETaskBuffer[ 256 ];
+osStaticThreadDef_t serviceBLETaskControlBlock;
+const osThreadAttr_t serviceBLETask_attributes = {
+  .name = "serviceBLETask",
+  .cb_mem = &serviceBLETaskControlBlock,
+  .cb_size = sizeof(serviceBLETaskControlBlock),
+  .stack_mem = &serviceBLETaskBuffer[0],
+  .stack_size = sizeof(serviceBLETaskBuffer),
+  .priority = (osPriority_t) osPriorityHigh2,
 };
 /* Definitions for motorTmoutTask */
 osThreadId_t motorTmoutTaskHandle;
@@ -199,18 +187,6 @@ const osThreadAttr_t motorTmoutTask_attributes = {
   .stack_mem = &motorTmoutTaskBuffer[0],
   .stack_size = sizeof(motorTmoutTaskBuffer),
   .priority = (osPriority_t) osPriorityLow,
-};
-/* Definitions for BLETask */
-osThreadId_t BLETaskHandle;
-uint32_t BLETaskBuffer[ 128 ];
-osStaticThreadDef_t BLETaskControlBlock;
-const osThreadAttr_t BLETask_attributes = {
-  .name = "BLETask",
-  .cb_mem = &BLETaskControlBlock,
-  .cb_size = sizeof(BLETaskControlBlock),
-  .stack_mem = &BLETaskBuffer[0],
-  .stack_size = sizeof(BLETaskBuffer),
-  .priority = (osPriority_t) osPriorityHigh2,
 };
 /* Definitions for tiltDetectTask */
 osThreadId_t tiltDetectTaskHandle;
@@ -257,14 +233,6 @@ const osTimerAttr_t timerSensorRead_attributes = {
   .cb_mem = &timerSensorReadControlBlock,
   .cb_size = sizeof(timerSensorReadControlBlock),
 };
-/* Definitions for timerBLEUpdate */
-osTimerId_t timerBLEUpdateHandle;
-osStaticTimerDef_t timerBLEUpdateControlBlock;
-const osTimerAttr_t timerBLEUpdate_attributes = {
-  .name = "timerBLEUpdate",
-  .cb_mem = &timerBLEUpdateControlBlock,
-  .cb_size = sizeof(timerBLEUpdateControlBlock),
-};
 /* Definitions for mutexSystemInfo */
 osMutexId_t mutexSystemInfoHandle;
 osStaticMutexDef_t mutexSystemInfoControlBlock;
@@ -310,15 +278,12 @@ static void MX_RNG_Init(void);
 void StartDefaultTask(void *argument);
 void StartTaskBoatSM(void *argument);
 void StartTaskDepthDetect(void *argument);
-void StartTaskReadData(void *argument);
-void StartTaskSendData(void *argument);
+void StartBLECommTask(void *argument);
 void StartTaskMotorTmout(void *argument);
-void StartBLETask(void *argument);
 void StartTiltDetection(void *argument);
 void startCollisionDetectTask(void *argument);
 void callbackMotorTimeout(void *argument);
 void callbackSensorRead(void *argument);
-void callbackBLEUpdate(void *argument);
 
 /* USER CODE BEGIN PFP */
 void initMotorPWM(void);
@@ -444,9 +409,6 @@ int main(void)
   /* creation of timerSensorRead */
   timerSensorReadHandle = osTimerNew(callbackSensorRead, osTimerPeriodic, NULL, &timerSensorRead_attributes);
 
-  /* creation of timerBLEUpdate */
-  timerBLEUpdateHandle = osTimerNew(callbackBLEUpdate, osTimerPeriodic, NULL, &timerBLEUpdate_attributes);
-
   /* USER CODE BEGIN RTOS_TIMERS */
   /* start timers, add new ones, ... */
   if(osTimerStart(timerMotorTimeoutHandle, 100) != osOK)
@@ -454,10 +416,6 @@ int main(void)
 	  Error_Handler();
   }
   if(osTimerStart(timerSensorReadHandle, 100) != osOK)
-  {
-	  Error_Handler();
-  }
-  if(osTimerStart(timerBLEUpdateHandle, 100) != osOK)
   {
 	  Error_Handler();
   }
@@ -481,17 +439,11 @@ int main(void)
   /* creation of depthDetectTask */
   depthDetectTaskHandle = osThreadNew(StartTaskDepthDetect, NULL, &depthDetectTask_attributes);
 
-  /* creation of readDataTask */
-  readDataTaskHandle = osThreadNew(StartTaskReadData, NULL, &readDataTask_attributes);
-
-  /* creation of sendDataTask */
-  sendDataTaskHandle = osThreadNew(StartTaskSendData, NULL, &sendDataTask_attributes);
+  /* creation of serviceBLETask */
+  serviceBLETaskHandle = osThreadNew(StartBLECommTask, NULL, &serviceBLETask_attributes);
 
   /* creation of motorTmoutTask */
   motorTmoutTaskHandle = osThreadNew(StartTaskMotorTmout, NULL, &motorTmoutTask_attributes);
-
-  /* creation of BLETask */
-  BLETaskHandle = osThreadNew(StartBLETask, NULL, &BLETask_attributes);
 
   /* creation of tiltDetectTask */
   tiltDetectTaskHandle = osThreadNew(StartTiltDetection, NULL, &tiltDetectTask_attributes);
@@ -1256,7 +1208,8 @@ void StartTaskBoatSM(void *argument)
 			if (system_information.fields.control_active)
 			{
 				system_information.fields.boat_state = kBoatDriving;
-				osThreadFlagsSet(readDataTaskHandle, THREAD_FLAG_DRIVING);
+				// TODO: unblock command processor here
+//				osThreadFlagsSet(readDataTaskHandle, THREAD_FLAG_DRIVING);
 			}
 			break;
 		case kBoatDriving:
@@ -1265,7 +1218,8 @@ void StartTaskBoatSM(void *argument)
 			if (!system_information.fields.control_active)
 			{
 				// Clear flags
-				osThreadFlagsSet(readDataTaskHandle, 0x0);
+				// TODO: disable command processor here
+//				osThreadFlagsSet(readDataTaskHandle, 0x0);
 
 				// If no control is active, return to "idle" state
 				system_information.fields.boat_state = kBoatIdle;
@@ -1273,7 +1227,8 @@ void StartTaskBoatSM(void *argument)
 			else if (system_information.fields.collision_detected || system_information.fields.depth_exceeded)
 			{
 				// Clear flags
-				osThreadFlagsSet(readDataTaskHandle, 0x0);
+//				osThreadFlagsSet(readDataTaskHandle, 0x0);
+				// TODO: disable command processor here
 
 				// If an error occurs (i.e. collision detection or depth exceeded),
 				system_information.fields.boat_state = kBoatError;
@@ -1342,49 +1297,44 @@ void StartTaskDepthDetect(void *argument)
   /* USER CODE END StartTaskDepthDetect */
 }
 
-/* USER CODE BEGIN Header_StartTaskReadData */
+/* USER CODE BEGIN Header_StartBLECommTask */
 /**
-* @brief Function implementing the readDataTask thread.
+* @brief Function implementing the serviceBLETask thread.
 * @param argument: Not used
 * @retval None
 */
-/* USER CODE END Header_StartTaskReadData */
-void StartTaskReadData(void *argument)
+/* USER CODE END Header_StartBLECommTask */
+void StartBLECommTask(void *argument)
 {
-  /* USER CODE BEGIN StartTaskReadData */
+  /* USER CODE BEGIN StartBLECommTask */
   /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
-  /* USER CODE END StartTaskReadData */
-}
-
-/* USER CODE BEGIN Header_StartTaskSendData */
-/**
-* @brief Function implementing the sendDataTask thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_StartTaskSendData */
-void StartTaskSendData(void *argument)
-{
-  /* USER CODE BEGIN StartTaskSendData */
-  /* Infinite loop */
-    uint8_t buf[20];
-    uint32_t tick = osKernelGetTickCount();
-	  for(;;)
-	  {
-      tick += BLE_TRANSMISSION_RATE;
-		  MX_BlueNRG_MS_Process();
-		  osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
-      system_information.fields.tick = tick - BLE_TRANSMISSION_RATE; // remove the rate calc from the stamped time
-		  memcpy((void *)buf, (void *)system_information.buffer, sizeof(system_information.buffer));
-      osMutexRelease(mutexSystemInfoHandle);
-		  sendData(buf, sizeof(buf));
-		  osDelayUntil(tick);
-	  }
-  /* USER CODE END StartTaskSendData */
+	uint8_t buf_tx[20];
+	uint8_t *buf_rx;
+	uint8_t n_received_bytes;
+	uint32_t tick = osKernelGetTickCount();
+	for(;;)
+	{
+		tick += BLE_TRANSMISSION_RATE;
+		MX_BlueNRG_MS_Process();
+		osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
+		system_information.fields.tick = tick - BLE_TRANSMISSION_RATE; // remove the rate calc from the stamped time
+		memcpy((void *)buf_tx, (void *)system_information.buffer, sizeof(system_information.buffer));
+		osMutexRelease(mutexSystemInfoHandle);
+		sendData(buf_tx, sizeof(buf_tx));
+		buf_rx = get_latest_received_sample(&n_received_bytes);
+		if (buf_rx != NULL)
+		{
+			// Sample is ready to enqueue
+			printf("Received %d bytes: ", n_received_bytes);
+			for (uint8_t i = 0; i < n_received_bytes; ++i)
+			{
+				printf("%c", buf_rx[i]);
+			}
+			printf("\n");
+		}
+		osDelayUntil(tick);
+	}
+  /* USER CODE END StartBLECommTask */
 }
 
 /* USER CODE BEGIN Header_StartTaskMotorTmout */
@@ -1437,25 +1387,6 @@ void StartTaskMotorTmout(void *argument)
   /* USER CODE END StartTaskMotorTmout */
 }
 
-/* USER CODE BEGIN Header_StartBLETask */
-/**
-  * @brief  Function implementing the BLETaskask thread.
-  * @param  argument: Not used
-  * @retval None
-  */
-/* USER CODE END Header_StartBLETask */
-void StartBLETask(void *argument)
-{
-  /* USER CODE BEGIN StartBLETask */
-  /* Infinite loop */
-  for(;;)
-  {
-	  osThreadFlagsWait(0x0001, osFlagsWaitAny, osWaitForever);
-	  MX_BlueNRG_MS_Process();
-  }
-  /* USER CODE END StartBLETask */
-}
-
 /* USER CODE BEGIN Header_StartTiltDetection */
 /**
 * @brief Function implementing the tiltDetectionTa thread.
@@ -1485,8 +1416,6 @@ void StartTiltDetection(void *argument)
         sqrtf(accel_buf[1]*accel_buf[1] + accel_buf[2]*accel_buf[2])
       )
     );
-
-//    printf("%.3f %.3f\n", roll, pitch);
 
     osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
     system_information.fields.tilt_roll = (int8_t)(CLAMP(roll, MAX_REPORTED_TILT_DEG));
@@ -1556,14 +1485,6 @@ void callbackSensorRead(void *argument)
   /* USER CODE BEGIN callbackSensorRead */
 
   /* USER CODE END callbackSensorRead */
-}
-
-/* callbackBLEUpdate function */
-void callbackBLEUpdate(void *argument)
-{
-  /* USER CODE BEGIN callbackBLEUpdate */
-	osThreadFlagsSet(BLETaskHandle, 0x0001);
-  /* USER CODE END callbackBLEUpdate */
 }
 
 /**

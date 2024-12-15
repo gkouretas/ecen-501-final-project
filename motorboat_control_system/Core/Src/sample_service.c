@@ -54,6 +54,8 @@ uint16_t rx_handle;
 
 uint16_t sampleServHandle, TXCharHandle, RXCharHandle;
 
+static LatestBuffer_t latest_rx_buf = {.is_populated = false};
+
 extern uint8_t bnrg_expansion_board;
 extern BLE_RoleTypeDef BLE_Role;
 /**
@@ -208,10 +210,21 @@ void startReadRXCharHandle(void)
 void receiveData(uint8_t* data_buffer, uint8_t Nb_bytes)
 {
   BSP_LED_Toggle(LED2);
+  if (Nb_bytes > sizeof(latest_rx_buf.buf))
+  {
+	  PRINTF("Received packet too big (%d)\n", Nb_bytes);
+	  goto Exit;
+  }
 
+  memcpy((void *)latest_rx_buf.buf, (void *)data_buffer, Nb_bytes);
+  latest_rx_buf.n_bytes = Nb_bytes;
+  latest_rx_buf.is_populated = true;
+
+Exit:
   for(int i = 0; i < Nb_bytes; i++) {
     PRINTF("%c", data_buffer[i]);
   }
+  PRINTF("\n");
   fflush(stdout);
 }
 
@@ -419,6 +432,23 @@ void user_notify(void * pData)
     }
     break;
   }
+}
+
+uint8_t *get_latest_received_sample(uint8_t *n_bytes)
+{
+	if (!latest_rx_buf.is_populated)
+	{
+		return NULL;
+	}
+	else
+	{
+		if (n_bytes != NULL)
+		{
+			*n_bytes = latest_rx_buf.n_bytes;
+		}
+
+		return latest_rx_buf.buf;
+	}
 }
 /**
  * @}
