@@ -213,7 +213,7 @@ const osThreadAttr_t BLETask_attributes = {
 };
 /* Definitions for tiltDetectTask */
 osThreadId_t tiltDetectTaskHandle;
-uint32_t tiltDetectionTaBuffer[ 128 ];
+uint32_t tiltDetectionTaBuffer[ 256 ];
 osStaticThreadDef_t tiltDetectionTaControlBlock;
 const osThreadAttr_t tiltDetectTask_attributes = {
   .name = "tiltDetectTask",
