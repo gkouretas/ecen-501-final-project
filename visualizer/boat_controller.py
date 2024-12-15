@@ -3,6 +3,7 @@ import queue
 
 from motor_model import Motor
 from ble_listener import MotorboatBLEListener
+
 class BoatController:
     def __init__(self, motor_params: Motor.Params, update_rate: float, ble_comms: MotorboatBLEListener):
         self._m1 = Motor(motor_params, update_rate)
@@ -34,7 +35,7 @@ class BoatController:
         self._heading = 0.0 
         self._steering = 0.0
         
-        self._depth = 0.0
+        self._depth = 0
                         
     @property
     def timestamp(self):
@@ -181,10 +182,11 @@ class BoatController:
         
         self._ts = packet.timestamp
         
-        # Data is already in degrees
+        # Get roll/pitch, data is already in degrees
         self._roll = packet.roll
         self._pitch = packet.pitch
         
-        print(f"Received packet from timestamp: {packet.timestamp}")
+        self._depth = packet.depth
+        
         for state, motor in zip(packet.motor_states, [self._m1, self._m2, self._m3, self._m4]):
             motor.sim(state.direction * self._v_ref * state.duty_cycle / 100)

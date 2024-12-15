@@ -120,10 +120,9 @@ typedef struct {
 typedef union {
 	 struct __attribute__((packed)) {
 		  BoatState_t boat_state: 2;
-		  bool control_active: 1;
 		  bool collision_detected: 1;
 		  bool depth_too_low: 1;
-		  uint8_t reserved : 3; // for alignment                       // 1 byte
+		  uint8_t reserved : 4; // for alignment                       // 1 byte
 		  uint16_t depth_mm: 16;                                           // 2 bytes
 		  int8_t tilt_roll: 8;                                            // 1 byte
 		  int8_t tilt_pitch: 8;                                           // 1 byte
@@ -342,7 +341,6 @@ volatile static SystemInformation_t system_information = {
 	.fields = {
 		  .boat_state = kBoatIdle,
 		  .collision_detected = false,
-		  .control_active = false,
 		  .depth_too_low = false,
 		  .motor_statuses = {
 			  {.is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0)},
@@ -1468,6 +1466,7 @@ void StartTaskDepthDetect(void *argument)
 	  }
 
 	  osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
+	  printf("Depth: %d\n", range);
 	  system_information.fields.depth_mm = range;
 	  system_information.fields.depth_too_low = range < DEPTH_RANGE_MAXIMUM_MM;
 	  osMutexRelease(mutexSystemInfoHandle);
@@ -1511,12 +1510,6 @@ void StartBLECommTask(void *argument)
 		if (buf_rx != NULL)
 		{
 			// Sample is ready to enqueue
-//			printf("Received %d bytes: ", n_received_bytes);
-//			for (uint8_t i = 0; i < n_received_bytes; ++i)
-//			{
-//				printf("%c", buf_rx[i]);
-//			}
-//			printf("\n");
 			if (n_received_bytes != 5)
 			{
 				printf("Incompatible buffer sizes (%d != 5)\n", n_received_bytes);
@@ -1634,7 +1627,7 @@ void StartTiltDetection(void *argument)
     // TODO: fix sign
     system_information.fields.tilt_roll = (int8_t)(SIGN(roll) * CLAMP(abs(roll), MAX_REPORTED_TILT_DEG));
     system_information.fields.tilt_pitch = (int8_t)(SIGN(pitch) * CLAMP(abs(pitch), MAX_REPORTED_TILT_DEG));
-    printf("%.3f %d / %.3f %d\n", roll, system_information.fields.tilt_roll, pitch, system_information.fields.tilt_pitch);
+//    printf("%.3f %d / %.3f %d\n", roll, system_information.fields.tilt_roll, pitch, system_information.fields.tilt_pitch);
     osMutexRelease(mutexSystemInfoHandle);
     
     osDelayUntil(tick);
