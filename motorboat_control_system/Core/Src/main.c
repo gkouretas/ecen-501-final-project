@@ -54,8 +54,18 @@ typedef struct {
 typedef enum {
   kDirectionCCW = +1,
   kDirectionNull = 0,
-  kDirectionCW = -1,
+  kDirectionCW = -1
 } Direction_t; // CCW (+), CW (-)
+
+typedef struct {
+    TIM_HandleTypeDef *timer;  // Pointer to the timer (e.g., TIM2, TIM3)
+    uint32_t channel;         // PWM channel (e.g., TIM_CHANNEL_1)
+} MotorTimerConfig_t;
+
+typedef enum{
+	PWM_OK = 0,
+	PWM_ERROR = 1
+}PWMstatus_t;
 
 typedef struct {
   uint16_t duty_cycle: 7; // 0-100
@@ -107,9 +117,9 @@ typedef union {
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-// Convert convert 16-bit duty cycle value to correct timer CRR using PWM frequency
-#define DUTY_TO_CCR(duty_cycle_16bit) \
-    (((uint32_t)(duty_cycle_16bit) * TIM_ARR) / 65535)
+// Convert convert 7-bit duty cycle value to correct timer CRR using PWM frequency
+#define DUTY_TO_CCR(duty_cycle) \
+    (((uint32_t)(duty_cycle) * TIM_ARR) / 100)
 
 #define RAD_2_DEG(x) ((x) * 180 / 3.14159265f)
 #define SIGN(x) ((x) >= 0 ? 1 : -1)
@@ -244,6 +254,15 @@ const osMutexAttr_t mutexSystemInfo_attributes = {
 /* USER CODE BEGIN PV */
 VL53l0X_Interface_t *tof_intf = NULL;
 
+// Create an array mapping motors to their timers and channels
+MotorTimerConfig_t motorTimerConfig[NUM_MOTORS + NUM_SPARE_MOTORS] = {
+    {&htim2, TIM_CHANNEL_1}, // Motor 1 -> TIM2, Channel 1
+    {&htim2, TIM_CHANNEL_2}, // Motor 2 -> TIM2, Channel 2
+    {&htim2, TIM_CHANNEL_3}, // Motor 3 -> TIM2, Channel 3
+    {&htim2, TIM_CHANNEL_4}, // Motor 4 -> TIM2, Channel 4
+    {&htim3, TIM_CHANNEL_1}, // Motor 5 -> TIM3, Channel 1
+};
+
 volatile static SystemInformation_t system_information = {
 	.fields = {
 		  .anchor_lifted = false,
@@ -286,8 +305,8 @@ void callbackMotorTimeout(void *argument);
 void callbackSensorRead(void *argument);
 
 /* USER CODE BEGIN PFP */
-void initMotorPWM(void);
-void updateMotorPWM(uint16_t *pwm_array, size_t size);
+PWMstatus_t initMotorPWM(volatile SystemInformation_t *system_info);
+PWMstatus_t updateMotorDutyCycle(volatile SystemInformation_t *system_info, uint8_t motor_index, uint16_t duty_cycle);
 void append_to_buffer(char* buffer, size_t* remaining_size, const char* string);
 char* system_info_to_json(const SystemInformation_t* info, char* json_buffer, size_t buffer_size);
 
@@ -365,7 +384,7 @@ int main(void)
   MX_USART1_UART_Init();
   MX_RNG_Init();
   /* USER CODE BEGIN 2 */
-  initMotorPWM();
+  initMotorPWM(&system_information);
   MX_BlueNRG_MS_Init();
 
   if (BSP_ACCELERO_Init() != 0)
@@ -1125,45 +1144,56 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 
 // Use motor state to initialize PWM
-void initMotorPWM(void)
+PWMstatus_t initMotorPWM(volatile SystemInformation_t *system_info)
 {
-	// Initialize PWM duty cycles
-	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, system_information.fields.motor_statuses[0].duty_cycle);
-	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, system_information.fields.motor_statuses[1].duty_cycle);
-	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, system_information.fields.motor_statuses[2].duty_cycle);
-	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, system_information.fields.motor_statuses[3].duty_cycle);
-	__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, system_information.fields.motor_statuses[4].duty_cycle); // Spare motor
+	uint16_t duty_cycle;
 
-	// Start PWM on all channels
-	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
- 	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_3);
-	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_4);
-	HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1); // Spare motor
+	// Initialize PWM duty cycles
+	for(int i = 0; i < NUM_MOTORS + NUM_SPARE_MOTORS; i++)
+	{
+		duty_cycle = system_info->fields.motor_statuses[i].duty_cycle;
+
+		if (duty_cycle > 0x7F)
+		{
+			printf("Duty cycle out of range for motor index: %u", i);
+			duty_cycle = 0;
+			return PWM_ERROR;
+		}
+		// Set timer CCR register to correct duty cycle
+		__HAL_TIM_SET_COMPARE(motorTimerConfig[i].timer,
+				motorTimerConfig[i].channel,
+				DUTY_TO_CCR(duty_cycle));
+
+		// Start PWM on channel
+		if(HAL_TIM_PWM_Start(motorTimerConfig[i].timer,motorTimerConfig[i].channel) != HAL_OK)
+		{
+			printf("Failed to start PWM for motor index: %u", i);
+			return PWM_ERROR;
+		}
+	}
+	return PWM_OK;
 }
 
-// Update motor states with new PWM values and update timers
-void updateMotorPWM(uint16_t *pwm_array, size_t size)
+// Update motor state with new PWM values and update timers
+PWMstatus_t updateMotorDutyCycle(volatile SystemInformation_t *system_info, uint8_t motor_index, uint16_t duty_cycle)
 {
-	// Check if array has new PWM values for each motor
-	if((size / sizeof(pwm_array[0])) != (NUM_MOTORS + NUM_SPARE_MOTORS))
-	{
-		Error_Handler();
-	}
+    // Check motor index is valid
+    if (motor_index >= NUM_MOTORS + NUM_SPARE_MOTORS) {
+        printf("Invalid motor index: %u\n", motor_index);
+        return PWM_ERROR;
+    }
 
-	osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
-	// Update motor states with new PWM values
-	for(int i=0; i<(NUM_MOTORS + NUM_SPARE_MOTORS);i++)
-	{
-		system_information.fields.motor_statuses[i].duty_cycle = pwm_array[i];
-	}
-	osMutexRelease(mutexSystemInfoHandle);
+    if (duty_cycle > 0x7F)
+    {
+    	printf("Duty cycle out of range for motor index: %u\n", motor_index);
+    	return PWM_ERROR;
+    }
 
-	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, pwm_array[0]);
-	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, pwm_array[1]);
-	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, pwm_array[2]);
-	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, pwm_array[3]);
-	__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, pwm_array[4]);
+    system_info->fields.motor_statuses[motor_index].duty_cycle = duty_cycle;
 
+    __HAL_TIM_SET_COMPARE(motorTimerConfig[motor_index].timer,
+    		motorTimerConfig[motor_index].channel, DUTY_TO_CCR(duty_cycle));
+    return PWM_OK;
 }
 
 /* USER CODE END 4 */
