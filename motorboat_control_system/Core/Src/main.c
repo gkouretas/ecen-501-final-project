@@ -46,9 +46,32 @@ typedef enum {
 	kBoatError = 3
 } BoatState_t;
 
-typedef struct {
-  uint16_t direction; // 0 -> 65536 : Left -> Right
-  uint16_t speed;     // 0 -> 65536 : 0-100% speed
+typedef enum {
+	kCommandMotion = 0,
+	kCommandState = 1
+} BoatCommandType_t;
+
+typedef enum {
+	kRecoveryRequest = 0,
+	kAnchorBoat = 1
+} RequestedState_t;
+
+typedef union __attribute__((packed)) {
+	struct __attribute__((packed)) {
+		BoatCommandType_t cmd_type : 8;
+		union {
+			struct __attribute__((packed)) {
+
+				uint16_t direction; // 0 -> 65536 : Left -> Right
+				uint16_t speed;     // 0 -> 65536 : 0-100% speed
+			} motion;
+			struct __attribute__((packed)) {
+				RequestedState_t state: 8;
+				uint32_t reserved : 24;
+			} state;
+		} cmd;
+	} fields;
+	uint8_t buffer[5]; // 5 bytes right now...
 } BoatCommand_t;
 
 typedef enum {
@@ -113,6 +136,11 @@ typedef union {
 #define ACCEL_SAMPLING_RATE                   100 // 10 Hz
 #define BLE_TRANSMISSION_RATE                 500 // 2 Hz. TODO: increase as high as we can...
 #define MAX_REPORTED_TILT_DEG                 120 // within u8
+
+#define COMMAND_MSG_QUEUE_PRI                 (10)
+#define COMMAND_MSG_QUEUE_TIMEOUT             (0)    // No timeout
+#define STATE_MSG_QUEUE_PRI                   (10)
+#define STATE_MSG_QUEUE_TIMEOUT               (0) // TODO: set timeout when we start servicing this queue
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -226,6 +254,11 @@ const osThreadAttr_t collisionDetect_attributes = {
 osMessageQueueId_t queueBoatCommandHandle;
 const osMessageQueueAttr_t queueBoatCommand_attributes = {
   .name = "queueBoatCommand"
+};
+/* Definitions for queueBoatReqState */
+osMessageQueueId_t queueBoatReqStateHandle;
+const osMessageQueueAttr_t queueBoatReqState_attributes = {
+  .name = "queueBoatReqState"
 };
 /* Definitions for timerMotorTimeout */
 osTimerId_t timerMotorTimeoutHandle;
@@ -443,6 +476,9 @@ int main(void)
   /* Create the queue(s) */
   /* creation of queueBoatCommand */
   queueBoatCommandHandle = osMessageQueueNew (1, sizeof(BoatCommand_t), &queueBoatCommand_attributes);
+
+  /* creation of queueBoatReqState */
+  queueBoatReqStateHandle = osMessageQueueNew (30, sizeof(BoatCommand_t), &queueBoatReqState_attributes);
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
@@ -1300,16 +1336,12 @@ void StartTaskDepthDetect(void *argument)
   {
 	  if (vl53l0x_prepare_sample(tof_intf) != HAL_OK)
 	  {
-//		  printf("Failed to prepare sample\n");
+		  printf("Failed to prepare range sample\n");
 	  }
-	  else
-	  {
-//		  printf("Prepared sample, waiting for ISR\n");
-	  }
-	  if (osThreadFlagsWait(THREAD_FLAG_DEPTH_READING_READY, osFlagsWaitAll, 1000) == osFlagsErrorTimeout)
+	  if ((osThreadFlagsWait(THREAD_FLAG_DEPTH_READING_READY, osFlagsWaitAll, 1000) & osFlagsError) != 0)
 	  {
 		  // Flag timeout
-//		  printf("Timeout\n");
+		  printf("Error waiting for range ISR\n");
 		  vl53l0x_read_range_single(tof_intf, &range, true);
 	  }
 	  else
@@ -1321,8 +1353,6 @@ void StartTaskDepthDetect(void *argument)
 	  system_information.fields.depth_mm = range;
 	  system_information.fields.depth_exceeded = range > DEPTH_RANGE_MAXIMUM_MM;
 	  osMutexRelease(mutexSystemInfoHandle);
-
-//	  printf("Depth range: %d\n", range);
   }
   /* USER CODE END StartTaskDepthDetect */
 }
@@ -1338,29 +1368,64 @@ void StartBLECommTask(void *argument)
 {
   /* USER CODE BEGIN StartBLECommTask */
   /* Infinite loop */
+	BoatCommand_t *cmd;
 	uint8_t buf_tx[20];
 	uint8_t *buf_rx;
 	uint8_t n_received_bytes;
 	uint32_t tick = osKernelGetTickCount();
 	for(;;)
 	{
+		// Increment SW timer
 		tick += BLE_TRANSMISSION_RATE;
+
+		// Run BlueNRG process
 		MX_BlueNRG_MS_Process();
+
+		// Acquire the system info mutex
 		osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
 		system_information.fields.tick = tick - BLE_TRANSMISSION_RATE; // remove the rate calc from the stamped time
 		memcpy((void *)buf_tx, (void *)system_information.buffer, sizeof(system_information.buffer));
 		osMutexRelease(mutexSystemInfoHandle);
+
+		// Send data
 		sendData(buf_tx, sizeof(buf_tx));
 		buf_rx = get_latest_received_sample(&n_received_bytes);
 		if (buf_rx != NULL)
 		{
 			// Sample is ready to enqueue
-			printf("Received %d bytes: ", n_received_bytes);
-			for (uint8_t i = 0; i < n_received_bytes; ++i)
+//			printf("Received %d bytes: ", n_received_bytes);
+//			for (uint8_t i = 0; i < n_received_bytes; ++i)
+//			{
+//				printf("%c", buf_rx[i]);
+//			}
+//			printf("\n");
+			if (n_received_bytes != 5)
 			{
-				printf("%c", buf_rx[i]);
+				printf("Incompatible buffer sizes (%d != 5)\n", n_received_bytes);
 			}
-			printf("\n");
+			else
+			{
+				cmd = (BoatCommand_t *)buf_rx;
+				printf("raw: %02X%02X%02X%02X%02X\n", cmd->buffer[0], cmd->buffer[1], cmd->buffer[2], cmd->buffer[3], cmd->buffer[4]);
+
+				switch (cmd->fields.cmd_type)
+				{
+					case kCommandMotion:
+//						printf("%d %d %d\n", cmd->fields.cmd_type, cmd->fields.cmd.motion.direction, cmd->fields.cmd.motion.speed);
+						// No timeout, just put if there is any space
+						osMessageQueuePut(queueBoatCommandHandle, (void *)cmd->buffer, COMMAND_MSG_QUEUE_PRI, COMMAND_MSG_QUEUE_TIMEOUT);
+						break;
+					case kCommandState:
+//						printf("%d %d %ld\n", cmd->fields.cmd_type, cmd->fields.cmd.state.state, cmd->fields.cmd.state.reserved);
+						// TODO: state queue...
+						osMessageQueuePut(queueBoatReqStateHandle, (void *)cmd->buffer, STATE_MSG_QUEUE_PRI, STATE_MSG_QUEUE_TIMEOUT);
+						break;
+					default:
+						// Invalid message type, ignore
+						break;
+				}
+			}
+
 		}
 		osDelayUntil(tick);
 	}
