@@ -160,10 +160,10 @@ class BoatController:
     
     def _apply_commands(self):
         try:
-            packet = self._ble_comms.pop_command(block = False, timeout = 0.1)
+            packet = self._ble_comms.pop_command()
         except queue.Empty:
             return
         
         print(f"Received packet from timestamp: {packet.timestamp}")
         for state, motor in zip(packet.motor_states, [self._m1, self._m2, self._m3, self._m4]):
-            motor.sim(self._v_ref * state.duty_cycle / 100)
+            motor.sim(state.direction * self._v_ref * state.duty_cycle / 100)
