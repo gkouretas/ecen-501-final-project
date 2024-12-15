@@ -1246,59 +1246,6 @@ void updateMotorPWM(uint16_t *pwm_array, size_t size)
 
 }
 
-// Append to JSON buffer safely
-void append_to_buffer(char* buffer, size_t* remaining_size, const char* string) {
-    strncat(buffer, string, *remaining_size - 1);
-    *remaining_size -= strlen(string);
-}
-
-// Convert the struct to a JSON string
-char* system_info_to_json(const SystemInformation_t* info, char* json_buffer, size_t buffer_size) {
-    if (!info || !json_buffer || buffer_size == 0) return NULL;
-
-    size_t remaining_size = buffer_size;
-    char temp_json[128];
-
-//    // Start the JSON string
-//    snprintf(temp_json, sizeof(temp_json),
-//        "{"
-//        "\"boat_state\":%d,"
-//        "\"control_active\":%s,"
-//        "\"collision_detected\":%s,"
-//        "\"depth_exceeded\":%s,"
-//        "\"anchor_lifted\":%s,"
-//        "\"motor_statuses\":[",
-//        info->boat_state,
-//        info->control_active ? "true" : "false",
-//        info->collision_detected ? "true" : "false",
-//        info->depth_exceeded ? "true" : "false",
-//        info->anchor_lifted ? "true" : "false"
-//    );
-//    append_to_buffer(json_buffer, &remaining_size, temp_json);
-//
-//    // Append motor statuses
-//    for (int i = 0; i < NUM_MOTORS + NUM_SPARE_MOTORS; i++) {
-//        char temp_json[128]; // Temporary buffer for each motor
-//        snprintf(temp_json, sizeof(temp_json),
-//            "{"
-//            "\"direction\":%d,"
-//            "\"duty_cycle\":%u,"
-//            "\"timeout\":%s"
-//            "}%s",
-//            info->motor_statuses[i].direction,
-//            info->motor_statuses[i].duty_cycle,
-//            info->motor_statuses[i].timeout ? "true" : "false",
-//            (i < NUM_MOTORS + NUM_SPARE_MOTORS - 1) ? "," : "" // Add comma except for the last item
-//        );
-//        append_to_buffer(json_buffer, &remaining_size, temp_json);
-//    }
-//
-//    // Close the JSON array and object
-//    append_to_buffer(json_buffer, &remaining_size, "]}");
-
-    return json_buffer;
-}
-
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_StartDefaultTask */
@@ -1437,11 +1384,21 @@ void StartTaskDepthDetect(void *argument)
 void StartTaskReadData(void *argument)
 {
   /* USER CODE BEGIN StartTaskReadData */
-  /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
+//	uint8_t buf[20];
+//	uint32_t tick = osKernelGetTickCount();
+	for(;;)
+	{
+		osDelay(1);
+//		tick += BLE_TRANSMISSION_RATE;
+//		MX_BlueNRG_MS_Process();
+//		receiveData(buf, sizeof(buf));
+//		osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
+//		system_information.fields.tick = tick - BLE_TRANSMISSION_RATE; // remove the rate calc from the stamped time
+//		memcpy((void *)buf, (void *)system_information.buffer, sizeof(system_information.buffer));
+//		osMutexRelease(mutexSystemInfoHandle);
+//
+//		osDelayUntil(tick);
+	}
   /* USER CODE END StartTaskReadData */
 }
 
@@ -1456,19 +1413,31 @@ void StartTaskSendData(void *argument)
 {
   /* USER CODE BEGIN StartTaskSendData */
   /* Infinite loop */
-    uint8_t buf[20];
+    uint8_t buf_tx[20];
+    uint8_t *buf_rx;
+    uint8_t n_received_bytes;
     uint32_t tick = osKernelGetTickCount();
-	  for(;;)
-	  {
-      tick += BLE_TRANSMISSION_RATE;
-		  MX_BlueNRG_MS_Process();
-		  osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
-      system_information.fields.tick = tick - BLE_TRANSMISSION_RATE; // remove the rate calc from the stamped time
-		  memcpy((void *)buf, (void *)system_information.buffer, sizeof(system_information.buffer));
-      osMutexRelease(mutexSystemInfoHandle);
-		  sendData(buf, sizeof(buf));
-		  osDelayUntil(tick);
-	  }
+	for(;;)
+	{
+		tick += BLE_TRANSMISSION_RATE;
+		MX_BlueNRG_MS_Process();
+		osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
+		system_information.fields.tick = tick - BLE_TRANSMISSION_RATE; // remove the rate calc from the stamped time
+		memcpy((void *)buf_tx, (void *)system_information.buffer, sizeof(system_information.buffer));
+		osMutexRelease(mutexSystemInfoHandle);
+		sendData(buf_tx, sizeof(buf_tx));
+		buf_rx = get_latest_received_sample(&n_received_bytes);
+		if (buf_rx != NULL)
+		{
+			printf("Received %d bytes: ", n_received_bytes);
+			for (uint8_t i = 0; i < n_received_bytes; ++i)
+			{
+				printf("%c", buf_rx[i]);
+			}
+			printf("\n");
+		}
+		osDelayUntil(tick);
+	}
   /* USER CODE END StartTaskSendData */
 }
 
@@ -1498,7 +1467,8 @@ void StartTaskMotorTmout(void *argument)
 			  if (system_information.fields.motor_statuses[i].duty_cycle == 0 && (idle_start_time[i] - current_tick) >= motor_timeout)
 			  {
 				  system_information.fields.motor_statuses[i].is_idle = true;
-			  }else
+			  }
+			  else
 			  {
 				  system_information.fields.motor_statuses[i].is_idle = false;
 				  idle_start_time[i] = current_tick;
@@ -1558,8 +1528,6 @@ void StartTiltDetection(void *argument)
         sqrtf(accel_buf[1]*accel_buf[1] + accel_buf[2]*accel_buf[2])
       )
     );
-
-//    printf("%.3f %.3f\n", roll, pitch);
 
     osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
     system_information.fields.tilt_roll = (int8_t)(CLAMP(roll, MAX_REPORTED_TILT_DEG));

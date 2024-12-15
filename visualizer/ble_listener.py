@@ -130,6 +130,7 @@ class MotorboatBLEListener:
     
         print(f"{self._tx_uuid} {self._rx_uuid}")
         await self.dispatch_notification_listener()
+        await self.dispatch_writer()
         while True:
             await asyncio.sleep(1)
     
@@ -164,6 +165,10 @@ class MotorboatBLEListener:
         # Start notification handler
         await self._client.start_notify(self._rx_uuid, self.notification_callback)
 
+    async def dispatch_writer(self):
+        while True:
+            await self._client.write_gatt_char(self._tx_uuid, b"hello")
+            await asyncio.sleep(1)
 
 def main():
     ble_listener = MotorboatBLEListener(
