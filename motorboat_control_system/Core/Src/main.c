@@ -54,7 +54,8 @@ typedef enum {
 
 typedef enum {
 	kRecoveryRequest = 0,
-	kAnchorBoat = 1
+	kAnchorBoatRequest = 1,
+	kLiftAnchorRequest = 2
 } RequestedState_t;
 
 #define RX_BUFFER_SIZE (5)
@@ -95,12 +96,22 @@ typedef enum{
 
 typedef struct {
   uint16_t duty_cycle: 7; // 0-100
-  bool timeout: 1;
+  bool is_active: 1;
   bool is_alive: 1;
   bool is_idle: 1;
   uint8_t direction: 2; // represent as u2 int (CW: 0, NULL: 1, CCW: 2)
   uint8_t reserved : 4; // for alignment
 } MotorStatus_t; // total size: 2 bytes
+
+// is_active: motor that's one of the four active or not
+// is_alive: when a motor is functional/not functional. if damaged
+// is_idle: is moving?
+// - will work?
+
+// Active
+// Alive
+// Idle
+// Running
 
 #define NUM_MOTORS       (4)
 #define NUM_SPARE_MOTORS (1)
@@ -111,9 +122,8 @@ typedef union {
 		  BoatState_t boat_state: 2;
 		  bool control_active: 1;
 		  bool collision_detected: 1;
-		  bool depth_exceeded: 1;
-		  bool anchor_lifted: 1;
-		  uint8_t reserved : 2; // for alignment                       // 1 byte
+		  bool depth_too_low: 1;
+		  uint8_t reserved : 3; // for alignment                       // 1 byte
 		  uint16_t depth_mm: 16;                                           // 2 bytes
 		  int8_t tilt_roll: 8;                                            // 1 byte
 		  int8_t tilt_pitch: 8;                                           // 1 byte
@@ -125,6 +135,11 @@ typedef union {
 } SystemInformation_t;
 /* USER CODE END PTD */
 
+// control_active:
+// collision_detected
+// depth_too_low
+// anchor_lifted
+
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define THREAD_FLAG_DRIVING 0x1
@@ -135,7 +150,7 @@ typedef union {
 #define MOTOR_FAILURE_CHANCE 20.0f // percent chance of motor failure from collision
 #define MOTOR_TIMEOUT_INTERVAL 2000 // motor idle timeount in ms
 
-#define DEPTH_RANGE_MAXIMUM_MM                1000 // 1m
+#define DEPTH_RANGE_MAXIMUM_MM                500 // 500mm
 #define ACCEL_SAMPLING_RATE                   100 // 10 Hz
 #define BLE_TRANSMISSION_RATE                 100 // 10 Hz. TODO: increase as high as we can...
 #define MAX_REPORTED_TILT_DEG                 120 // within u8
@@ -156,8 +171,8 @@ typedef union {
     (((uint32_t)(duty_cycle) * (TIM_ARR + 1)) / 100)
 
 #define RAD_2_DEG(x) ((x) * 180 / 3.14159265f)
-#define SIGN(x) ((x) != 0 ? ((x) >= 0 ? 1 : -1) : 0)
-#define CLAMP(x, _max_) ((SIGN(x)) * ((x) > (_max_) ? (_max_) : x))
+#define SIGN(x) ((x) != 0 ? ((x) > 0 ? 1 : -1) : 0)
+#define CLAMP(x, _max_) (((SIGN(x)) * ((x) > (_max_) ? (_max_) : x)))
 #define RESCALE(x, _in_max_, _out_max_) ((x) * (_out_max_) / (_in_max_))
 #define DIRECTION_TO_S2(x) ((x) + 1)
 /* USER CODE END PM */
@@ -325,17 +340,16 @@ MotorTimerConfig_t motorTimerConfig[NUM_MOTORS + NUM_SPARE_MOTORS] = {
 
 volatile static SystemInformation_t system_information = {
 	.fields = {
-		  .anchor_lifted = false,
 		  .boat_state = kBoatIdle,
 		  .collision_detected = false,
 		  .control_active = false,
-		  .depth_exceeded = false,
+		  .depth_too_low = false,
 		  .motor_statuses = {
-			  {.timeout = false, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0)},
-			  {.timeout = false, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0)},
-			  {.timeout = false, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0)},
-			  {.timeout = false, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0)},
-			  {.timeout = false, .is_alive = true, .is_idle = true,  .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0)}
+			  {.is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0)},
+			  {.is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0)},
+			  {.is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0)},
+			  {.is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0)},
+			  {.is_alive = true, .is_idle = true,  .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0)}
 		  }
 	}
 };
@@ -367,10 +381,11 @@ void callbackSensorRead(void *argument);
 
 /* USER CODE BEGIN PFP */
 PWMstatus_t initMotorPWM(volatile SystemInformation_t *system_info);
-PWMstatus_t updateMotorDutyCycle(volatile SystemInformation_t *system_info, uint8_t motor_index, uint16_t duty_cycle);
-void append_to_buffer(char* buffer, size_t* remaining_size, const char* string);
-char* system_info_to_json(const SystemInformation_t* info, char* json_buffer, size_t buffer_size);
-
+PWMstatus_t updateMotorDutyCycle(volatile SystemInformation_t *system_info);
+void clearPWM(volatile SystemInformation_t *system_info);
+bool is_driving_valid(volatile SystemInformation_t *system_info);
+bool are_motors_moving(volatile SystemInformation_t *system_info);
+void activate_motors(volatile SystemInformation_t *system_info);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -1246,25 +1261,71 @@ PWMstatus_t initMotorPWM(volatile SystemInformation_t *system_info)
 }
 
 // Update motor state with new PWM values and update timers
-PWMstatus_t updateMotorDutyCycle(volatile SystemInformation_t *system_info, uint8_t motor_index, uint16_t duty_cycle)
+PWMstatus_t updateMotorDutyCycle(volatile SystemInformation_t *system_info)
 {
-    // Check motor index is valid
-    if (motor_index >= NUM_MOTORS + NUM_SPARE_MOTORS) {
-        printf("Invalid motor index: %u\n", motor_index);
-        return PWM_ERROR;
-    }
+	uint16_t duty_cycle;
+	for (size_t motor_index = 0; motor_index < NUM_MOTORS + NUM_SPARE_MOTORS; ++motor_index)
+	{
+		duty_cycle = system_info->fields.motor_statuses[motor_index].duty_cycle;
+		if (duty_cycle > PWM_MAX_VALUE)
+		{
+			printf("Duty cycle out of range for motor index: %u\n", motor_index);
+			return PWM_ERROR;
+		}
 
-    if (duty_cycle > 0x7F)
-    {
-    	printf("Duty cycle out of range for motor index: %u\n", motor_index);
-    	return PWM_ERROR;
-    }
+		if (system_info->fields.motor_statuses[motor_index].is_alive)
+		{
+			__HAL_TIM_SET_COMPARE(motorTimerConfig[motor_index].timer,
+					    		motorTimerConfig[motor_index].channel, DUTY_TO_CCR(duty_cycle));
+		}
+	}
 
-    system_info->fields.motor_statuses[motor_index].duty_cycle = duty_cycle;
-
-    __HAL_TIM_SET_COMPARE(motorTimerConfig[motor_index].timer,
-    		motorTimerConfig[motor_index].channel, DUTY_TO_CCR(duty_cycle));
     return PWM_OK;
+}
+
+void clearPWM(volatile SystemInformation_t *system_info)
+{
+	// TODO: clear duty cycle commands
+}
+
+bool is_driving_valid(volatile SystemInformation_t *system_info)
+{
+	// TODO:
+	for (size_t motor_index = 0; motor_index < NUM_MOTORS + NUM_SPARE_MOTORS; ++motor_index)
+	{
+		if (system_info->fields.motor_statuses[motor_index].is_active &&
+				system_info->fields.motor_statuses[motor_index].duty_cycle == 0)
+		{
+			return false;
+		}
+	}
+
+	return true;
+}
+
+bool are_motors_moving(volatile SystemInformation_t *system_info)
+{
+	for (size_t motor_index = 0; motor_index < NUM_MOTORS + NUM_SPARE_MOTORS; ++motor_index)
+	{
+		if (system_info->fields.motor_statuses[motor_index].is_active &&
+				system_info->fields.motor_statuses[motor_index].duty_cycle > 0)
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+void activate_motors(volatile SystemInformation_t *system_info)
+{
+	for (size_t motor_index = 0; motor_index < NUM_MOTORS + NUM_SPARE_MOTORS; ++motor_index)
+	{
+		if (system_info->fields.motor_statuses[motor_index].is_alive)
+		{
+			system_info->fields.motor_statuses[motor_index].is_active = true;
+		}
+	}
 }
 
 /* USER CODE END 4 */
@@ -1297,17 +1358,32 @@ void StartDefaultTask(void *argument)
 void StartTaskBoatSM(void *argument)
 {
   /* USER CODE BEGIN StartTaskBoatSM */
-
+	bool received_cmd = false;
+	BoatCommand_t cmd;
+	uint8_t pri;
 	/* Infinite loop */
 	for(;;)
 	{
 		osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
+
+		received_cmd = (osMessageQueueGetCount(queueBoatReqStateHandle) > 0);
+		if (received_cmd)
+		{
+			osMessageQueueGet(queueBoatReqStateHandle, (void *)&cmd, &pri, osWaitForever);
+		}
+    
 		switch (system_information.fields.boat_state)
 		{
 		case kBoatIdle:
 			// Stopped exit: User input applied (i.e. gas pedal)
-			if (system_information.fields.control_active)
+			if (received_cmd && cmd.fields.cmd.state.state == kAnchorBoatRequest)
 			{
+				system_information.fields.boat_state = kBoatAnchored;
+			}
+			else if (are_motors_moving(&system_information))
+			{
+				// Check if any motors are active
+				activate_motors(&system_information);
 				system_information.fields.boat_state = kBoatDriving;
 				// TODO: unblock command processor here
 //				osThreadFlagsSet(readDataTaskHandle, THREAD_FLAG_DRIVING);
@@ -1316,37 +1392,44 @@ void StartTaskBoatSM(void *argument)
 		case kBoatDriving:
 			// Driving exit: User input removed
 			//               Collision detected or depth exceeded -> anchored
-			if (!system_information.fields.control_active)
-			{
-				// Clear flags
-				// TODO: disable command processor here
-//				osThreadFlagsSet(readDataTaskHandle, 0x0);
-
-				// If no control is active, return to "idle" state
-				system_information.fields.boat_state = kBoatIdle;
-			}
-			else if (system_information.fields.collision_detected || system_information.fields.depth_exceeded)
+			if (system_information.fields.collision_detected || system_information.fields.depth_too_low)
 			{
 				// Clear flags
 //				osThreadFlagsSet(readDataTaskHandle, 0x0);
 				// TODO: disable command processor here
 
 				// If an error occurs (i.e. collision detection or depth exceeded),
+				clearPWM(&system_information);
 				system_information.fields.boat_state = kBoatError;
+			}
+			else if (!are_motors_moving(&system_information))
+			{
+				system_information.fields.boat_state = kBoatIdle;
+			}
+			else
+			{
+				updateMotorDutyCycle(&system_information);
 			}
 			break;
 		case kBoatAnchored:
-			if (system_information.fields.anchor_lifted)
+			if (cmd.fields.cmd.state.state == kLiftAnchorRequest)
 			{
 				// Once the anchor is listed, we now move back to "idle" state
 				system_information.fields.boat_state = kBoatIdle;
 			}
 			break;
 		case kBoatError:
-			if (!system_information.fields.collision_detected && !system_information.fields.depth_exceeded)
+			if (cmd.fields.cmd.state.state == kRecoveryRequest)
 			{
-				// If error conditions have cleared, return to "idle" state
-				system_information.fields.boat_state = kBoatIdle;
+				// Request to recover from the error
+				if (!system_information.fields.depth_too_low)
+				{
+					// Clear error
+					system_information.fields.collision_detected = false;
+
+					// If error conditions have cleared, return to "idle" state
+					system_information.fields.boat_state = kBoatIdle;
+				}
 			}
 			break;
 		}
@@ -1386,7 +1469,7 @@ void StartTaskDepthDetect(void *argument)
 
 	  osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
 	  system_information.fields.depth_mm = range;
-	  system_information.fields.depth_exceeded = range > DEPTH_RANGE_MAXIMUM_MM;
+	  system_information.fields.depth_too_low = range < DEPTH_RANGE_MAXIMUM_MM;
 	  osMutexRelease(mutexSystemInfoHandle);
   }
   /* USER CODE END StartTaskDepthDetect */
@@ -1621,25 +1704,16 @@ void StartBoatControl(void *argument)
     {
       // Once we get a command from the queue, apply it to our motors
     	osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
-    	// hard-code motor 0 as "angle" motor
+    	    	// hard-code motor 0 as "angle" motor
     	system_information.fields.motor_statuses[0].direction = DIRECTION_TO_S2(SIGN(command.fields.cmd.motion.angle));
-		updateMotorDutyCycle(
-			&system_information, 0, abs(RESCALE(command.fields.cmd.motion.angle, INT16_MAX, PWM_MAX_VALUE))
-		);
+    	system_information.fields.motor_statuses[0].duty_cycle = abs(RESCALE(command.fields.cmd.motion.angle, INT16_MAX, PWM_MAX_VALUE));
 
 		// for now, all thrust motors just go forward
-		system_information.fields.motor_statuses[1].direction = DIRECTION_TO_S2(kDirectionCCW);
-		system_information.fields.motor_statuses[2].direction = DIRECTION_TO_S2(kDirectionCCW);
-		system_information.fields.motor_statuses[3].direction = DIRECTION_TO_S2(kDirectionCCW);
-		updateMotorDutyCycle(
-			&system_information, 1, abs(RESCALE(command.fields.cmd.motion.speed, UINT16_MAX, PWM_MAX_VALUE))
-		);
-		updateMotorDutyCycle(
-			&system_information, 2, abs(RESCALE(command.fields.cmd.motion.speed, UINT16_MAX, PWM_MAX_VALUE))
-		);
-		updateMotorDutyCycle(
-			&system_information, 3, abs(RESCALE(command.fields.cmd.motion.speed, UINT16_MAX, PWM_MAX_VALUE))
-		);
+    	for (size_t i = 1; i <= 3; ++i)
+    	{
+    		system_information.fields.motor_statuses[i].direction = DIRECTION_TO_S2(kDirectionCCW);
+    		system_information.fields.motor_statuses[i].duty_cycle = abs(RESCALE(command.fields.cmd.motion.speed, UINT16_MAX, PWM_MAX_VALUE));
+    	}
 
 		osMutexRelease(mutexSystemInfoHandle);
     }
