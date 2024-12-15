@@ -30,7 +30,7 @@ extern "C" {
 #include <string.h>
 
 /*---------- Print messages from BLE1 files at user level -----------*/
-#define BLE1_DEBUG      1
+#define BLE1_DEBUG      0
 /*---------- Number of Bytes reserved for HCI Read Packet -----------*/
 #define HCI_READ_PACKET_SIZE      128
 /*---------- Number of Bytes reserved for HCI Max Payload -----------*/

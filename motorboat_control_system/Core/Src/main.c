@@ -65,9 +65,11 @@ typedef struct {
 } MotorState_t;
 
 typedef struct {
-  Direction_t direction: 2;
   bool timeout: 1;
-  uint8_t reserved : 5; // for alignment
+  bool is_alive: 1;
+  bool is_idle: 1;
+  Direction_t direction: 2;
+  uint8_t reserved : 3; // for alignment
   uint16_t duty_cycle;
 } MotorStatus_t;
 
@@ -80,7 +82,7 @@ typedef struct {
   bool collision_detected: 1;
   bool depth_exceeded: 1;
   bool anchor_lifted: 1;
-  uint8_t reserved : 1; // for alignment
+  uint8_t reserved : 2; // for alignment
   uint16_t depth_mm;
   int8_t tilt_roll;
   int8_t tilt_pitch;
@@ -92,6 +94,10 @@ typedef struct {
 /* USER CODE BEGIN PD */
 #define THREAD_FLAG_DRIVING 0x1
 #define THREAD_FLAG_DEPTH_READING_READY 0x1
+#define THREAD_FLAG_COLLISION_DETECTED 0x1
+#define THREAD_FLAG_CHECK_MOTOR_TIMEOUT 0x1
+
+#define MOTOR_FAILURE_CHANCE 20.0f // percent chance of motor failure from collision
 
 #define DEPTH_RANGE_MAXIMUM_MM                1000 // 1m
 #define ACCEL_SAMPLING_RATE                   100 // 10 Hz
@@ -116,6 +122,8 @@ DFSDM_Channel_HandleTypeDef hdfsdm1_channel1;
 I2C_HandleTypeDef hi2c2;
 
 QSPI_HandleTypeDef hqspi;
+
+RNG_HandleTypeDef hrng;
 
 TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
@@ -215,6 +223,18 @@ const osThreadAttr_t tiltDetectTask_attributes = {
   .stack_size = sizeof(tiltDetectionTaBuffer),
   .priority = (osPriority_t) osPriorityLow,
 };
+/* Definitions for collisionDetect */
+osThreadId_t collisionDetectHandle;
+uint32_t collisionDetectBuffer[ 128 ];
+osStaticThreadDef_t collisionDetectControlBlock;
+const osThreadAttr_t collisionDetect_attributes = {
+  .name = "collisionDetect",
+  .cb_mem = &collisionDetectControlBlock,
+  .cb_size = sizeof(collisionDetectControlBlock),
+  .stack_mem = &collisionDetectBuffer[0],
+  .stack_size = sizeof(collisionDetectBuffer),
+  .priority = (osPriority_t) osPriorityLow,
+};
 /* Definitions for queueBoatCommand */
 osMessageQueueId_t queueBoatCommandHandle;
 const osMessageQueueAttr_t queueBoatCommand_attributes = {
@@ -273,17 +293,19 @@ volatile static SystemInformation_t system_information = {
   .control_active = false,
   .depth_exceeded = false,
   .motor_statuses = {
-	  {.direction = kDirectionNull, .duty_cycle = 0, .timeout = false},
-	  {.direction = kDirectionNull, .duty_cycle = 0, .timeout = false},
-	  {.direction = kDirectionNull, .duty_cycle = 0, .timeout = false},
-	  {.direction = kDirectionNull, .duty_cycle = 0, .timeout = false},
-	  {.direction = kDirectionNull, .duty_cycle = 0, .timeout = false}
+	  {.timeout = false, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = 0},
+	  {.timeout = false, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = 0},
+	  {.timeout = false, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = 0},
+	  {.timeout = false, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = 0},
+	  {.timeout = false, .is_alive = true, .is_idle = true,  .direction = kDirectionNull, .duty_cycle = 0}
   }
 };
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
+void PeriphCommonClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_DFSDM1_Init(void);
 static void MX_I2C2_Init(void);
@@ -292,6 +314,7 @@ static void MX_USB_OTG_FS_PCD_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_TIM3_Init(void);
 static void MX_USART1_UART_Init(void);
+static void MX_RNG_Init(void);
 void StartDefaultTask(void *argument);
 void StartTaskBoatSM(void *argument);
 void StartTaskDepthDetect(void *argument);
@@ -300,6 +323,7 @@ void StartTaskSendData(void *argument);
 void StartTaskMotorTmout(void *argument);
 void StartBLETask(void *argument);
 void StartTiltDetection(void *argument);
+void startCollisionDetectTask(void *argument);
 void callbackMotorTimeout(void *argument);
 void callbackSensorRead(void *argument);
 void callbackBLEUpdate(void *argument);
@@ -336,6 +360,12 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 			printf("Task unblocked\n");
     	}
     }
+
+    if(GPIO_Pin == GPIO_PIN_13)
+    {
+    	osThreadFlagsSet(collisionDetectHandle, THREAD_FLAG_COLLISION_DETECTED);
+    	printf("Collision detected\n");
+    }
 }
 
 /* USER CODE END 0 */
@@ -363,6 +393,9 @@ int main(void)
   /* Configure the system clock */
   SystemClock_Config();
 
+  /* Configure the peripherals common clocks */
+  PeriphCommonClock_Config();
+
   /* USER CODE BEGIN SysInit */
 
   /* USER CODE END SysInit */
@@ -376,7 +409,9 @@ int main(void)
   MX_TIM2_Init();
   MX_TIM3_Init();
   MX_USART1_UART_Init();
+  MX_RNG_Init();
   /* USER CODE BEGIN 2 */
+  initMotorStates();
   MX_BlueNRG_MS_Init();
 
   if (BSP_ACCELERO_Init() != 0)
@@ -422,7 +457,15 @@ int main(void)
 
   /* USER CODE BEGIN RTOS_TIMERS */
   /* start timers, add new ones, ... */
-  if(osTimerStart(timerBLEUpdateHandle, 10) != osOK)
+  if(osTimerStart(timerMotorTimeoutHandle, 100) != osOK)
+  {
+	  Error_Handler();
+  }
+  if(osTimerStart(timerSensorReadHandle, 100) != osOK)
+  {
+	  Error_Handler();
+  }
+  if(osTimerStart(timerBLEUpdateHandle, 100) != osOK)
   {
 	  Error_Handler();
   }
@@ -460,6 +503,9 @@ int main(void)
 
   /* creation of tiltDetectTask */
   tiltDetectTaskHandle = osThreadNew(StartTiltDetection, NULL, &tiltDetectTask_attributes);
+
+  /* creation of collisionDetect */
+  collisionDetectHandle = osThreadNew(startCollisionDetectTask, NULL, &collisionDetect_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -543,6 +589,32 @@ void SystemClock_Config(void)
   /** Enable MSI Auto calibration
   */
   HAL_RCCEx_EnableMSIPLLMode();
+}
+
+/**
+  * @brief Peripherals Common Clock Configuration
+  * @retval None
+  */
+void PeriphCommonClock_Config(void)
+{
+  RCC_PeriphCLKInitTypeDef PeriphClkInit = {0};
+
+  /** Initializes the peripherals clock
+  */
+  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USB|RCC_PERIPHCLK_RNG;
+  PeriphClkInit.UsbClockSelection = RCC_USBCLKSOURCE_PLLSAI1;
+  PeriphClkInit.RngClockSelection = RCC_RNGCLKSOURCE_PLLSAI1;
+  PeriphClkInit.PLLSAI1.PLLSAI1Source = RCC_PLLSOURCE_MSI;
+  PeriphClkInit.PLLSAI1.PLLSAI1M = 1;
+  PeriphClkInit.PLLSAI1.PLLSAI1N = 24;
+  PeriphClkInit.PLLSAI1.PLLSAI1P = RCC_PLLP_DIV7;
+  PeriphClkInit.PLLSAI1.PLLSAI1Q = RCC_PLLQ_DIV2;
+  PeriphClkInit.PLLSAI1.PLLSAI1R = RCC_PLLR_DIV2;
+  PeriphClkInit.PLLSAI1.PLLSAI1ClockOut = RCC_PLLSAI1_48M2CLK;
+  if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
+  {
+    Error_Handler();
+  }
 }
 
 /**
@@ -661,6 +733,32 @@ static void MX_QUADSPI_Init(void)
   /* USER CODE BEGIN QUADSPI_Init 2 */
 
   /* USER CODE END QUADSPI_Init 2 */
+
+}
+
+/**
+  * @brief RNG Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_RNG_Init(void)
+{
+
+  /* USER CODE BEGIN RNG_Init 0 */
+
+  /* USER CODE END RNG_Init 0 */
+
+  /* USER CODE BEGIN RNG_Init 1 */
+
+  /* USER CODE END RNG_Init 1 */
+  hrng.Instance = RNG;
+  if (HAL_RNG_Init(&hrng) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN RNG_Init 2 */
+
+  /* USER CODE END RNG_Init 2 */
 
 }
 
@@ -1088,12 +1186,8 @@ void initMotorStates(void)
 	{
 		motor_states[i].direction = system_information.motor_statuses[i].direction;
 		motor_states[i].duty_cycle = system_information.motor_statuses[i].duty_cycle;
-		motor_states[i].is_alive = true;
-		if(i >= NUM_MOTORS){
-			motor_states[i].is_idle = true;
-		}else{
-			motor_states[i].is_idle = false;
-		}
+		motor_states[i].is_alive = system_information.motor_statuses[i].is_alive;
+		motor_states[i].is_idle = system_information.motor_statuses[i].is_idle;
 	}
 }
 
@@ -1221,14 +1315,14 @@ void StartDefaultTask(void *argument)
 /* USER CODE END Header_StartTaskBoatSM */
 void StartTaskBoatSM(void *argument)
 {
-  /* USER CODE BEGIN StartTaskBoatSM */
+	/* USER CODE BEGIN StartTaskBoatSM */
 
-  /* Infinite loop */
-  for(;;)
-  {
-    osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
-    switch (system_information.boat_state)
-    {
+	/* Infinite loop */
+	for(;;)
+	{
+		osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
+		switch (system_information.boat_state)
+		{
 		case kBoatIdle:
 			// Stopped exit: User input applied (i.e. gas pedal)
 			if (system_information.control_active)
@@ -1237,43 +1331,43 @@ void StartTaskBoatSM(void *argument)
 				osThreadFlagsSet(readDataTaskHandle, THREAD_FLAG_DRIVING);
 			}
 			break;
-    case kBoatDriving:
-      // Driving exit: User input removed
-      //               Collision detected or depth exceeded -> anchored
-      if (!system_information.control_active)
-      {
-        // Clear flags
-        osThreadFlagsSet(readDataTaskHandle, 0x0);
+		case kBoatDriving:
+			// Driving exit: User input removed
+			//               Collision detected or depth exceeded -> anchored
+			if (!system_information.control_active)
+			{
+				// Clear flags
+				osThreadFlagsSet(readDataTaskHandle, 0x0);
 
-        // If no control is active, return to "idle" state
-        system_information.boat_state = kBoatIdle;
-      }
-      else if (system_information.collision_detected || system_information.depth_exceeded)
-      {
-        // Clear flags
-        osThreadFlagsSet(readDataTaskHandle, 0x0);
+				// If no control is active, return to "idle" state
+				system_information.boat_state = kBoatIdle;
+			}
+			else if (system_information.collision_detected || system_information.depth_exceeded)
+			{
+				// Clear flags
+				osThreadFlagsSet(readDataTaskHandle, 0x0);
 
-        // If an error occurs (i.e. collision detection or depth exceeded), 
-        system_information.boat_state = kBoatError;
-      }
-      break;
-    case kBoatAnchored:
-      if (system_information.anchor_lifted)
-      {
-        // Once the anchor is listed, we now move back to "idle" state
-        system_information.boat_state = kBoatIdle;
-      }
-      break;
-    case kBoatError:
-      if (!system_information.collision_detected && !system_information.depth_exceeded)
-      {
-        // If error conditions have cleared, return to "idle" state
-        system_information.boat_state = kBoatIdle;
-      }
-      break;
-    }
-    osMutexRelease(mutexSystemInfoHandle);
-  }
+				// If an error occurs (i.e. collision detection or depth exceeded),
+				system_information.boat_state = kBoatError;
+			}
+			break;
+		case kBoatAnchored:
+			if (system_information.anchor_lifted)
+			{
+				// Once the anchor is listed, we now move back to "idle" state
+				system_information.boat_state = kBoatIdle;
+			}
+			break;
+		case kBoatError:
+			if (!system_information.collision_detected && !system_information.depth_exceeded)
+			{
+				// If error conditions have cleared, return to "idle" state
+				system_information.boat_state = kBoatIdle;
+			}
+			break;
+		}
+		osMutexRelease(mutexSystemInfoHandle);
+	}
   /* USER CODE END StartTaskBoatSM */
 }
 
@@ -1353,10 +1447,11 @@ void StartTaskSendData(void *argument)
 	char str_temp[20];
   for(;;)
   {
+	  MX_BlueNRG_MS_Process();
 	  snprintf(str_temp, sizeof(str_temp), "Iter = %ld", loop);
 	  sendData((uint8_t *)str_temp, sizeof(str_temp));
 	  loop++;
-	  osDelay(100);
+	  osDelay(500);
   }
   /* USER CODE END StartTaskSendData */
 }
@@ -1377,23 +1472,24 @@ void StartTaskMotorTmout(void *argument)
   /* Infinite loop */
   for(;;)
   {
-	  osThreadFlagsWait(0x0001, osFlagsWaitAny, osWaitForever);
-	  osMutexAcquire(mutexMotorStateHandle, osWaitForever);
+	  osThreadFlagsWait(THREAD_FLAG_CHECK_MOTOR_TIMEOUT, osFlagsWaitAny, osWaitForever);
+
+	  osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
 	  current_tick = osKernelGetTickCount();
 
 	  for(int i=0; i<(NUM_MOTORS + NUM_SPARE_MOTORS);i++){
-		  if(motor_states[i].is_alive){
-			  if (motor_states[i].duty_cycle == 0 && (idle_start_time[i] - current_tick) >= motor_timeout)
+		  if(system_information.motor_statuses[i].is_alive){
+			  if (system_information.motor_statuses[i].duty_cycle == 0 && (idle_start_time[i] - current_tick) >= motor_timeout)
 			  {
-				  motor_states[i].is_idle = true;
+				  system_information.motor_statuses[i].is_idle = true;
 			  }else
 			  {
-				  motor_states[i].is_idle = false;
+				  system_information.motor_statuses[i].is_idle = false;
 				  idle_start_time[i] = current_tick;
 			  }
 		  }
 	  }
-	  osMutexRelease(mutexMotorStateHandle);
+	  osMutexRelease(mutexSystemInfoHandle);
   }
   /* USER CODE END StartTaskMotorTmout */
 }
@@ -1459,11 +1555,56 @@ void StartTiltDetection(void *argument)
   /* USER CODE END StartTiltDetection */
 }
 
+/* USER CODE BEGIN Header_startCollisionDetectTask */
+/**
+* @brief Function implementing the collisionDetect thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_startCollisionDetectTask */
+void startCollisionDetectTask(void *argument)
+{
+  /* USER CODE BEGIN startCollisionDetectTask */
+  /* Infinite loop */
+	uint32_t randNum;
+  for(;;)
+  {
+	  // Wait for pushbutton interrupt to execute
+	  osThreadFlagsWait(THREAD_FLAG_COLLISION_DETECTED, osFlagsWaitAny, osWaitForever);
+	 printf("collision task ran\n");
+
+	  // Set collision flag
+	  osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
+	  system_information.collision_detected = true;
+	  osMutexRelease(mutexSystemInfoHandle);
+
+	  // Generate random number to determine if a collision was severe enough to cause a motor to fail
+	  HAL_RNG_GenerateRandomNumber(&hrng, &randNum);
+
+	  // Normalize the random number to a range of 0-100
+	  float normalizedRandNum = (randNum / (float)UINT32_MAX) * 100.0f;
+
+	  // Determine if collision caused motor failure
+	  if (normalizedRandNum < MOTOR_FAILURE_CHANCE)
+	  {
+		  printf("Motor failure occured\n");
+		  // determine which motor failed, spare can also fail
+		  int failed_motor_index = (int)(randNum % (NUM_MOTORS + NUM_SPARE_MOTORS));
+		  printf("motor %d failed\n", failed_motor_index);
+		  osMutexAcquire(mutexMotorStateHandle, osWaitForever);
+		  	  motor_states[failed_motor_index].is_alive = false;
+		  osMutexRelease(mutexMotorStateHandle);
+	  }
+
+  }
+  /* USER CODE END startCollisionDetectTask */
+}
+
 /* callbackMotorTimeout function */
 void callbackMotorTimeout(void *argument)
 {
   /* USER CODE BEGIN callbackMotorTimeout */
-	osThreadFlagsSet(motorTmoutTaskHandle, 0x0001);
+	osThreadFlagsSet(motorTmoutTaskHandle, THREAD_FLAG_CHECK_MOTOR_TIMEOUT);
   /* USER CODE END callbackMotorTimeout */
 }
 
