@@ -58,13 +58,6 @@ typedef enum {
 } Direction_t; // CCW (+), CW (-)
 
 typedef struct {
-  uint16_t duty_cycle; // 0 -> 65536
-  Direction_t direction;
-  bool is_alive;
-  bool is_idle;
-} MotorState_t;
-
-typedef struct {
   uint16_t duty_cycle: 7; // 0-100
   bool timeout: 1;
   bool is_alive: 1;
@@ -185,7 +178,7 @@ const osThreadAttr_t readDataTask_attributes = {
 };
 /* Definitions for sendDataTask */
 osThreadId_t sendDataTaskHandle;
-uint32_t sendDataTaskBuffer[ 256 ];
+uint32_t sendDataTaskBuffer[ 128 ];
 osStaticThreadDef_t sendDataTaskControlBlock;
 const osThreadAttr_t sendDataTask_attributes = {
   .name = "sendDataTask",
@@ -221,7 +214,7 @@ const osThreadAttr_t BLETask_attributes = {
 };
 /* Definitions for tiltDetectTask */
 osThreadId_t tiltDetectTaskHandle;
-uint32_t tiltDetectionTaBuffer[ 256 ];
+uint32_t tiltDetectionTaBuffer[ 128 ];
 osStaticThreadDef_t tiltDetectionTaControlBlock;
 const osThreadAttr_t tiltDetectTask_attributes = {
   .name = "tiltDetectTask",
@@ -280,18 +273,8 @@ const osMutexAttr_t mutexSystemInfo_attributes = {
   .cb_mem = &mutexSystemInfoControlBlock,
   .cb_size = sizeof(mutexSystemInfoControlBlock),
 };
-/* Definitions for mutexMotorState */
-osMutexId_t mutexMotorStateHandle;
-osStaticMutexDef_t mutexMotorStateControlBlock;
-const osMutexAttr_t mutexMotorState_attributes = {
-  .name = "mutexMotorState",
-  .cb_mem = &mutexMotorStateControlBlock,
-  .cb_size = sizeof(mutexMotorStateControlBlock),
-};
 /* USER CODE BEGIN PV */
 VL53l0X_Interface_t *tof_intf = NULL;
-
-volatile MotorState_t motor_states[NUM_MOTORS + NUM_SPARE_MOTORS];
 
 volatile static SystemInformation_t system_information = {
 	.fields = {
@@ -338,7 +321,6 @@ void callbackSensorRead(void *argument);
 void callbackBLEUpdate(void *argument);
 
 /* USER CODE BEGIN PFP */
-void initMotorStates(void);
 void initMotorPWM(void);
 void updateMotorPWM(uint16_t *pwm_array, size_t size);
 void append_to_buffer(char* buffer, size_t* remaining_size, const char* string);
@@ -418,7 +400,7 @@ int main(void)
   MX_USART1_UART_Init();
   MX_RNG_Init();
   /* USER CODE BEGIN 2 */
-  initMotorStates();
+  initMotorPWM();
   MX_BlueNRG_MS_Init();
 
   if (BSP_ACCELERO_Init() != 0)
@@ -446,9 +428,6 @@ int main(void)
   /* Create the mutex(es) */
   /* creation of mutexSystemInfo */
   mutexSystemInfoHandle = osMutexNew(&mutexSystemInfo_attributes);
-
-  /* creation of mutexMotorState */
-  mutexMotorStateHandle = osMutexNew(&mutexMotorState_attributes);
 
   /* USER CODE BEGIN RTOS_MUTEX */
   /* add mutexes, ... */
@@ -1193,26 +1172,15 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 
-void initMotorStates(void)
-{
-	for (int i = 0; i<NUM_MOTORS + NUM_SPARE_MOTORS; i++)
-	{
-		motor_states[i].direction = system_information.fields.motor_statuses[i].direction;
-		motor_states[i].duty_cycle = system_information.fields.motor_statuses[i].duty_cycle;
-		motor_states[i].is_alive = system_information.fields.motor_statuses[i].is_alive;
-		motor_states[i].is_idle = system_information.fields.motor_statuses[i].is_idle;
-	}
-}
-
 // Use motor state to initialize PWM
 void initMotorPWM(void)
 {
 	// Initialize PWM duty cycles
-	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, motor_states[0].duty_cycle);
-	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, motor_states[1].duty_cycle);
-	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, motor_states[2].duty_cycle);
-	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, motor_states[3].duty_cycle);
-	__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, motor_states[4].duty_cycle); // Spare motor
+	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, system_information.fields.motor_statuses[0].duty_cycle);
+	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, system_information.fields.motor_statuses[1].duty_cycle);
+	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, system_information.fields.motor_statuses[2].duty_cycle);
+	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, system_information.fields.motor_statuses[3].duty_cycle);
+	__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, system_information.fields.motor_statuses[4].duty_cycle); // Spare motor
 
 	// Start PWM on all channels
 	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
@@ -1230,13 +1198,13 @@ void updateMotorPWM(uint16_t *pwm_array, size_t size)
 		Error_Handler();
 	}
 
-	osMutexAcquire(mutexMotorStateHandle, osWaitForever);
+	osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
 	// Update motor states with new PWM values
 	for(int i=0; i<(NUM_MOTORS + NUM_SPARE_MOTORS);i++)
 	{
-		motor_states[i].duty_cycle = pwm_array[i];
+		system_information.fields.motor_statuses[i].duty_cycle = pwm_array[i];
 	}
-	osMutexRelease(mutexMotorStateHandle);
+	osMutexRelease(mutexSystemInfoHandle);
 
 	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, pwm_array[0]);
 	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, pwm_array[1]);
@@ -1244,59 +1212,6 @@ void updateMotorPWM(uint16_t *pwm_array, size_t size)
 	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, pwm_array[3]);
 	__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, pwm_array[4]);
 
-}
-
-// Append to JSON buffer safely
-void append_to_buffer(char* buffer, size_t* remaining_size, const char* string) {
-    strncat(buffer, string, *remaining_size - 1);
-    *remaining_size -= strlen(string);
-}
-
-// Convert the struct to a JSON string
-char* system_info_to_json(const SystemInformation_t* info, char* json_buffer, size_t buffer_size) {
-    if (!info || !json_buffer || buffer_size == 0) return NULL;
-
-    size_t remaining_size = buffer_size;
-    char temp_json[128];
-
-//    // Start the JSON string
-//    snprintf(temp_json, sizeof(temp_json),
-//        "{"
-//        "\"boat_state\":%d,"
-//        "\"control_active\":%s,"
-//        "\"collision_detected\":%s,"
-//        "\"depth_exceeded\":%s,"
-//        "\"anchor_lifted\":%s,"
-//        "\"motor_statuses\":[",
-//        info->boat_state,
-//        info->control_active ? "true" : "false",
-//        info->collision_detected ? "true" : "false",
-//        info->depth_exceeded ? "true" : "false",
-//        info->anchor_lifted ? "true" : "false"
-//    );
-//    append_to_buffer(json_buffer, &remaining_size, temp_json);
-//
-//    // Append motor statuses
-//    for (int i = 0; i < NUM_MOTORS + NUM_SPARE_MOTORS; i++) {
-//        char temp_json[128]; // Temporary buffer for each motor
-//        snprintf(temp_json, sizeof(temp_json),
-//            "{"
-//            "\"direction\":%d,"
-//            "\"duty_cycle\":%u,"
-//            "\"timeout\":%s"
-//            "}%s",
-//            info->motor_statuses[i].direction,
-//            info->motor_statuses[i].duty_cycle,
-//            info->motor_statuses[i].timeout ? "true" : "false",
-//            (i < NUM_MOTORS + NUM_SPARE_MOTORS - 1) ? "," : "" // Add comma except for the last item
-//        );
-//        append_to_buffer(json_buffer, &remaining_size, temp_json);
-//    }
-//
-//    // Close the JSON array and object
-//    append_to_buffer(json_buffer, &remaining_size, "]}");
-
-    return json_buffer;
 }
 
 /* USER CODE END 4 */
@@ -1481,7 +1396,7 @@ void StartTaskSendData(void *argument)
 /* USER CODE END Header_StartTaskMotorTmout */
 void StartTaskMotorTmout(void *argument)
 {
-	/* USER CODE BEGIN StartTaskMotorTmout */
+  /* USER CODE BEGIN StartTaskMotorTmout */
 	uint32_t current_tick;
 	uint32_t idle_start_time [NUM_MOTORS + NUM_SPARE_MOTORS] = {osKernelGetTickCount()};
 
@@ -1519,7 +1434,7 @@ void StartTaskMotorTmout(void *argument)
 
 		osMutexRelease(mutexSystemInfoHandle);
 	}
-	/* USER CODE END StartTaskMotorTmout */
+  /* USER CODE END StartTaskMotorTmout */
 }
 
 /* USER CODE BEGIN Header_StartBLETask */
@@ -1592,39 +1507,38 @@ void StartTiltDetection(void *argument)
 /* USER CODE END Header_startCollisionDetectTask */
 void startCollisionDetectTask(void *argument)
 {
-  /* USER CODE BEGIN startCollisionDetectTask */
-  /* Infinite loop */
+	/* USER CODE BEGIN startCollisionDetectTask */
+	/* Infinite loop */
 	uint32_t randNum;
-  for(;;)
-  {
-	  // Wait for pushbutton interrupt to execute
-	  osThreadFlagsWait(THREAD_FLAG_COLLISION_DETECTED, osFlagsWaitAny, osWaitForever);
-	 printf("collision task ran\n");
+	for(;;)
+	{
+		// Wait for pushbutton interrupt to execute
+		osThreadFlagsWait(THREAD_FLAG_COLLISION_DETECTED, osFlagsWaitAny, osWaitForever);
 
-	  // Set collision flag
-	  osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
-	  system_information.fields.collision_detected = true;
-	  osMutexRelease(mutexSystemInfoHandle);
+		// Generate random number to determine if a collision was severe enough to cause a motor to fail
+		HAL_RNG_GenerateRandomNumber(&hrng, &randNum);
 
-	  // Generate random number to determine if a collision was severe enough to cause a motor to fail
-	  HAL_RNG_GenerateRandomNumber(&hrng, &randNum);
+		// Normalize the random number to a range of 0-100
+		float normalizedRandNum = (randNum / (float)UINT32_MAX) * 100.0f;
 
-	  // Normalize the random number to a range of 0-100
-	  float normalizedRandNum = (randNum / (float)UINT32_MAX) * 100.0f;
+		// Set collision flag
+		osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
+		system_information.fields.collision_detected = true;
+		osMutexRelease(mutexSystemInfoHandle);
 
-	  // Determine if collision caused motor failure
-	  if (normalizedRandNum < MOTOR_FAILURE_CHANCE)
-	  {
-		  printf("Motor failure occured\n");
-		  // determine which motor failed, spare can also fail
-		  int failed_motor_index = (int)(randNum % (NUM_MOTORS + NUM_SPARE_MOTORS));
-		  printf("motor %d failed\n", failed_motor_index);
-		  osMutexAcquire(mutexMotorStateHandle, osWaitForever);
-		  motor_states[failed_motor_index].is_alive = false;
-		  osMutexRelease(mutexMotorStateHandle);
-	  }
+		// Determine if collision caused motor failure
+		if (normalizedRandNum < MOTOR_FAILURE_CHANCE)
+		{
+			// determine which motor failed, spare can also fail
+			int failed_motor_index = (int)(randNum % (NUM_MOTORS + NUM_SPARE_MOTORS));
+			printf("motor %d failed\n", failed_motor_index);
 
-  }
+			osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
+			system_information.fields.motor_statuses[failed_motor_index].is_alive = false;
+			osMutexRelease(mutexSystemInfoHandle);
+		}
+
+	}
   /* USER CODE END startCollisionDetectTask */
 }
 
