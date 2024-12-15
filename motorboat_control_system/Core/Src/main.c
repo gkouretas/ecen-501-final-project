@@ -52,9 +52,9 @@ typedef struct {
 } BoatCommand_t;
 
 typedef enum {
-  kDirectionCCW = -1,
+  kDirectionCCW = +1,
   kDirectionNull = 0,
-  kDirectionCW = +1,
+  kDirectionCW = -1,
 } Direction_t; // CCW (+), CW (-)
 
 typedef struct {
@@ -65,28 +65,34 @@ typedef struct {
 } MotorState_t;
 
 typedef struct {
+  uint16_t duty_cycle: 7; // 0-100
   bool timeout: 1;
   bool is_alive: 1;
   bool is_idle: 1;
-  Direction_t direction: 2;
-  uint8_t reserved : 3; // for alignment
-  uint16_t duty_cycle;
-} MotorStatus_t;
+  uint8_t direction: 2; // represent as signed 2-bit int (00: 0, 01: 1, 1x: -1)
+  uint8_t reserved : 4; // for alignment
+} MotorStatus_t; // total size: 2 bytes
 
-#define NUM_MOTORS 4
-#define NUM_SPARE_MOTORS 1
+#define NUM_MOTORS       (4)
+#define NUM_SPARE_MOTORS (1)
+#define BLE_PACKET_SIZE  (20)
 
-typedef struct {
-  BoatState_t boat_state: 2;
-  bool control_active: 1;
-  bool collision_detected: 1;
-  bool depth_exceeded: 1;
-  bool anchor_lifted: 1;
-  uint8_t reserved : 2; // for alignment
-  uint16_t depth_mm;
-  int8_t tilt_roll;
-  int8_t tilt_pitch;
-  MotorStatus_t motor_statuses[NUM_MOTORS + NUM_SPARE_MOTORS];
+typedef union {
+	 struct __attribute__((packed)) {
+		  BoatState_t boat_state: 2;
+		  bool control_active: 1;
+		  bool collision_detected: 1;
+		  bool depth_exceeded: 1;
+		  bool anchor_lifted: 1;
+		  uint8_t reserved : 2; // for alignment                       // 1 byte
+		  uint16_t depth_mm: 16;                                           // 2 bytes
+		  int8_t tilt_roll: 8;                                            // 1 byte
+		  int8_t tilt_pitch: 8;                                           // 1 byte
+		  uint32_t tick: 32;                                               // 4 bytes
+		  MotorStatus_t motor_statuses[NUM_MOTORS + NUM_SPARE_MOTORS]; // 10 bytes
+		  uint8_t reserved2;                                           // 1 byte, padding for clean 20 piece
+	} fields;
+	uint8_t buffer[BLE_PACKET_SIZE];
 } SystemInformation_t;
 /* USER CODE END PTD */
 
@@ -101,6 +107,7 @@ typedef struct {
 
 #define DEPTH_RANGE_MAXIMUM_MM                1000 // 1m
 #define ACCEL_SAMPLING_RATE                   100 // 10 Hz
+#define BLE_TRANSMISSION_RATE                 500 // 2 Hz. TODO: increase as high as we can...
 #define MAX_REPORTED_TILT_DEG                 120 // within u8
 /* USER CODE END PD */
 
@@ -177,7 +184,7 @@ const osThreadAttr_t readDataTask_attributes = {
 };
 /* Definitions for sendDataTask */
 osThreadId_t sendDataTaskHandle;
-uint32_t sendDataTaskBuffer[ 128 ];
+uint32_t sendDataTaskBuffer[ 256 ];
 osStaticThreadDef_t sendDataTaskControlBlock;
 const osThreadAttr_t sendDataTask_attributes = {
   .name = "sendDataTask",
@@ -287,18 +294,20 @@ uint32_t motor_timeout = pdMS_TO_TICKS(2000);
 volatile MotorState_t motor_states[NUM_MOTORS + NUM_SPARE_MOTORS];
 
 volatile static SystemInformation_t system_information = {
-  .anchor_lifted = false,
-  .boat_state = kBoatIdle,
-  .collision_detected = false,
-  .control_active = false,
-  .depth_exceeded = false,
-  .motor_statuses = {
-	  {.timeout = false, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = 0},
-	  {.timeout = false, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = 0},
-	  {.timeout = false, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = 0},
-	  {.timeout = false, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = 0},
-	  {.timeout = false, .is_alive = true, .is_idle = true,  .direction = kDirectionNull, .duty_cycle = 0}
-  }
+	.fields = {
+		  .anchor_lifted = false,
+		  .boat_state = kBoatIdle,
+		  .collision_detected = false,
+		  .control_active = false,
+		  .depth_exceeded = false,
+		  .motor_statuses = {
+			  {.timeout = false, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = 0},
+			  {.timeout = false, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = 0},
+			  {.timeout = false, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = 0},
+			  {.timeout = false, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = 0},
+			  {.timeout = false, .is_alive = true, .is_idle = true,  .direction = kDirectionNull, .duty_cycle = 0}
+		  }
+	}
 };
 
 /* USER CODE END PV */
@@ -349,7 +358,6 @@ int _write(int file, char *ptr, int len) {
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
     if (GPIO_Pin == VL53L0X_GPIO1_EXTI7_Pin)
     {
-    	printf("Depth ISR triggered\n");
     	// If we triggered the ToF sensor ISR, mark as ready and unblock the depth detection task
     	vl53l0x_set_isr_flag();
 
@@ -357,14 +365,13 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
     	{
 			// Unblock thread flags task
 			osThreadFlagsSet(depthDetectTaskHandle, THREAD_FLAG_DEPTH_READING_READY);
-			printf("Task unblocked\n");
     	}
     }
 
     if(GPIO_Pin == GPIO_PIN_13)
     {
+    	// Collision detected
     	osThreadFlagsSet(collisionDetectHandle, THREAD_FLAG_COLLISION_DETECTED);
-    	printf("Collision detected\n");
     }
 }
 
@@ -417,6 +424,12 @@ int main(void)
   if (BSP_ACCELERO_Init() != 0)
   {
     printf("Failed to initialize acceleromter\n");
+    Error_Handler();
+  }
+
+  if (sizeof(system_information.buffer) > 20)
+  {
+    printf("Packet size too for BLE transmission\n");
     Error_Handler();
   }
 
@@ -1184,10 +1197,10 @@ void initMotorStates(void)
 {
 	for (int i = 0; i<NUM_MOTORS + NUM_SPARE_MOTORS; i++)
 	{
-		motor_states[i].direction = system_information.motor_statuses[i].direction;
-		motor_states[i].duty_cycle = system_information.motor_statuses[i].duty_cycle;
-		motor_states[i].is_alive = system_information.motor_statuses[i].is_alive;
-		motor_states[i].is_idle = system_information.motor_statuses[i].is_idle;
+		motor_states[i].direction = system_information.fields.motor_statuses[i].direction;
+		motor_states[i].duty_cycle = system_information.fields.motor_statuses[i].duty_cycle;
+		motor_states[i].is_alive = system_information.fields.motor_statuses[i].is_alive;
+		motor_states[i].is_idle = system_information.fields.motor_statuses[i].is_idle;
 	}
 }
 
@@ -1246,42 +1259,42 @@ char* system_info_to_json(const SystemInformation_t* info, char* json_buffer, si
     size_t remaining_size = buffer_size;
     char temp_json[128];
 
-    // Start the JSON string
-    snprintf(temp_json, sizeof(temp_json),
-        "{"
-        "\"boat_state\":%d,"
-        "\"control_active\":%s,"
-        "\"collision_detected\":%s,"
-        "\"depth_exceeded\":%s,"
-        "\"anchor_lifted\":%s,"
-        "\"motor_statuses\":[",
-        info->boat_state,
-        info->control_active ? "true" : "false",
-        info->collision_detected ? "true" : "false",
-        info->depth_exceeded ? "true" : "false",
-        info->anchor_lifted ? "true" : "false"
-    );
-    append_to_buffer(json_buffer, &remaining_size, temp_json);
-
-    // Append motor statuses
-    for (int i = 0; i < NUM_MOTORS + NUM_SPARE_MOTORS; i++) {
-        char temp_json[128]; // Temporary buffer for each motor
-        snprintf(temp_json, sizeof(temp_json),
-            "{"
-            "\"direction\":%d,"
-            "\"duty_cycle\":%u,"
-            "\"timeout\":%s"
-            "}%s",
-            info->motor_statuses[i].direction,
-            info->motor_statuses[i].duty_cycle,
-            info->motor_statuses[i].timeout ? "true" : "false",
-            (i < NUM_MOTORS + NUM_SPARE_MOTORS - 1) ? "," : "" // Add comma except for the last item
-        );
-        append_to_buffer(json_buffer, &remaining_size, temp_json);
-    }
-
-    // Close the JSON array and object
-    append_to_buffer(json_buffer, &remaining_size, "]}");
+//    // Start the JSON string
+//    snprintf(temp_json, sizeof(temp_json),
+//        "{"
+//        "\"boat_state\":%d,"
+//        "\"control_active\":%s,"
+//        "\"collision_detected\":%s,"
+//        "\"depth_exceeded\":%s,"
+//        "\"anchor_lifted\":%s,"
+//        "\"motor_statuses\":[",
+//        info->boat_state,
+//        info->control_active ? "true" : "false",
+//        info->collision_detected ? "true" : "false",
+//        info->depth_exceeded ? "true" : "false",
+//        info->anchor_lifted ? "true" : "false"
+//    );
+//    append_to_buffer(json_buffer, &remaining_size, temp_json);
+//
+//    // Append motor statuses
+//    for (int i = 0; i < NUM_MOTORS + NUM_SPARE_MOTORS; i++) {
+//        char temp_json[128]; // Temporary buffer for each motor
+//        snprintf(temp_json, sizeof(temp_json),
+//            "{"
+//            "\"direction\":%d,"
+//            "\"duty_cycle\":%u,"
+//            "\"timeout\":%s"
+//            "}%s",
+//            info->motor_statuses[i].direction,
+//            info->motor_statuses[i].duty_cycle,
+//            info->motor_statuses[i].timeout ? "true" : "false",
+//            (i < NUM_MOTORS + NUM_SPARE_MOTORS - 1) ? "," : "" // Add comma except for the last item
+//        );
+//        append_to_buffer(json_buffer, &remaining_size, temp_json);
+//    }
+//
+//    // Close the JSON array and object
+//    append_to_buffer(json_buffer, &remaining_size, "]}");
 
     return json_buffer;
 }
@@ -1321,48 +1334,48 @@ void StartTaskBoatSM(void *argument)
 	for(;;)
 	{
 		osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
-		switch (system_information.boat_state)
+		switch (system_information.fields.boat_state)
 		{
 		case kBoatIdle:
 			// Stopped exit: User input applied (i.e. gas pedal)
-			if (system_information.control_active)
+			if (system_information.fields.control_active)
 			{
-				system_information.boat_state = kBoatDriving;
+				system_information.fields.boat_state = kBoatDriving;
 				osThreadFlagsSet(readDataTaskHandle, THREAD_FLAG_DRIVING);
 			}
 			break;
 		case kBoatDriving:
 			// Driving exit: User input removed
 			//               Collision detected or depth exceeded -> anchored
-			if (!system_information.control_active)
+			if (!system_information.fields.control_active)
 			{
 				// Clear flags
 				osThreadFlagsSet(readDataTaskHandle, 0x0);
 
 				// If no control is active, return to "idle" state
-				system_information.boat_state = kBoatIdle;
+				system_information.fields.boat_state = kBoatIdle;
 			}
-			else if (system_information.collision_detected || system_information.depth_exceeded)
+			else if (system_information.fields.collision_detected || system_information.fields.depth_exceeded)
 			{
 				// Clear flags
 				osThreadFlagsSet(readDataTaskHandle, 0x0);
 
 				// If an error occurs (i.e. collision detection or depth exceeded),
-				system_information.boat_state = kBoatError;
+				system_information.fields.boat_state = kBoatError;
 			}
 			break;
 		case kBoatAnchored:
-			if (system_information.anchor_lifted)
+			if (system_information.fields.anchor_lifted)
 			{
 				// Once the anchor is listed, we now move back to "idle" state
-				system_information.boat_state = kBoatIdle;
+				system_information.fields.boat_state = kBoatIdle;
 			}
 			break;
 		case kBoatError:
-			if (!system_information.collision_detected && !system_information.depth_exceeded)
+			if (!system_information.fields.collision_detected && !system_information.fields.depth_exceeded)
 			{
 				// If error conditions have cleared, return to "idle" state
-				system_information.boat_state = kBoatIdle;
+				system_information.fields.boat_state = kBoatIdle;
 			}
 			break;
 		}
@@ -1387,16 +1400,16 @@ void StartTaskDepthDetect(void *argument)
   {
 	  if (vl53l0x_prepare_sample(tof_intf) != HAL_OK)
 	  {
-		  printf("Failed to prepare sample\n");
+//		  printf("Failed to prepare sample\n");
 	  }
 	  else
 	  {
-		  printf("Prepared sample, waiting for ISR\n");
+//		  printf("Prepared sample, waiting for ISR\n");
 	  }
 	  if (osThreadFlagsWait(THREAD_FLAG_DEPTH_READING_READY, osFlagsWaitAll, 1000) == osFlagsErrorTimeout)
 	  {
 		  // Flag timeout
-		  printf("Timeout\n");
+//		  printf("Timeout\n");
 		  vl53l0x_read_range_single(tof_intf, &range, true);
 	  }
 	  else
@@ -1405,11 +1418,11 @@ void StartTaskDepthDetect(void *argument)
 	  }
 
 	  osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
-	  system_information.depth_mm = range;
-	  system_information.depth_exceeded = range > DEPTH_RANGE_MAXIMUM_MM;
+	  system_information.fields.depth_mm = range;
+	  system_information.fields.depth_exceeded = range > DEPTH_RANGE_MAXIMUM_MM;
 	  osMutexRelease(mutexSystemInfoHandle);
 
-	  printf("Depth range: %d\n", range);
+//	  printf("Depth range: %d\n", range);
   }
   /* USER CODE END StartTaskDepthDetect */
 }
@@ -1443,16 +1456,19 @@ void StartTaskSendData(void *argument)
 {
   /* USER CODE BEGIN StartTaskSendData */
   /* Infinite loop */
-    long loop = 0;
-	char str_temp[20];
-  for(;;)
-  {
-	  MX_BlueNRG_MS_Process();
-	  snprintf(str_temp, sizeof(str_temp), "Iter = %ld", loop);
-	  sendData((uint8_t *)str_temp, sizeof(str_temp));
-	  loop++;
-	  osDelay(500);
-  }
+    uint8_t buf[20];
+    uint32_t tick = osKernelGetTickCount();
+	  for(;;)
+	  {
+      tick += BLE_TRANSMISSION_RATE;
+		  MX_BlueNRG_MS_Process();
+		  osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
+      system_information.fields.tick = tick - BLE_TRANSMISSION_RATE; // remove the rate calc from the stamped time
+		  memcpy((void *)buf, (void *)system_information.buffer, sizeof(system_information.buffer));
+      osMutexRelease(mutexSystemInfoHandle);
+		  sendData(buf, sizeof(buf));
+		  osDelayUntil(tick);
+	  }
   /* USER CODE END StartTaskSendData */
 }
 
@@ -1478,13 +1494,13 @@ void StartTaskMotorTmout(void *argument)
 	  current_tick = osKernelGetTickCount();
 
 	  for(int i=0; i<(NUM_MOTORS + NUM_SPARE_MOTORS);i++){
-		  if(system_information.motor_statuses[i].is_alive){
-			  if (system_information.motor_statuses[i].duty_cycle == 0 && (idle_start_time[i] - current_tick) >= motor_timeout)
+		  if(system_information.fields.motor_statuses[i].is_alive){
+			  if (system_information.fields.motor_statuses[i].duty_cycle == 0 && (idle_start_time[i] - current_tick) >= motor_timeout)
 			  {
-				  system_information.motor_statuses[i].is_idle = true;
+				  system_information.fields.motor_statuses[i].is_idle = true;
 			  }else
 			  {
-				  system_information.motor_statuses[i].is_idle = false;
+				  system_information.fields.motor_statuses[i].is_idle = false;
 				  idle_start_time[i] = current_tick;
 			  }
 		  }
@@ -1543,11 +1559,11 @@ void StartTiltDetection(void *argument)
       )
     );
 
-    printf("%.3f %.3f\n", roll, pitch);
+//    printf("%.3f %.3f\n", roll, pitch);
 
     osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
-    system_information.tilt_roll = CLAMP(roll, MAX_REPORTED_TILT_DEG);
-    system_information.tilt_pitch = CLAMP(pitch, MAX_REPORTED_TILT_DEG);
+    system_information.fields.tilt_roll = (int8_t)(CLAMP(roll, MAX_REPORTED_TILT_DEG));
+    system_information.fields.tilt_pitch = (int8_t)(CLAMP(pitch, MAX_REPORTED_TILT_DEG));
     osMutexRelease(mutexSystemInfoHandle);
     
     osDelayUntil(tick);
@@ -1575,7 +1591,7 @@ void startCollisionDetectTask(void *argument)
 
 	  // Set collision flag
 	  osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
-	  system_information.collision_detected = true;
+	  system_information.fields.collision_detected = true;
 	  osMutexRelease(mutexSystemInfoHandle);
 
 	  // Generate random number to determine if a collision was severe enough to cause a motor to fail
@@ -1592,7 +1608,7 @@ void startCollisionDetectTask(void *argument)
 		  int failed_motor_index = (int)(randNum % (NUM_MOTORS + NUM_SPARE_MOTORS));
 		  printf("motor %d failed\n", failed_motor_index);
 		  osMutexAcquire(mutexMotorStateHandle, osWaitForever);
-		  	  motor_states[failed_motor_index].is_alive = false;
+		  motor_states[failed_motor_index].is_alive = false;
 		  osMutexRelease(mutexMotorStateHandle);
 	  }
 
