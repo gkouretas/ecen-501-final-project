@@ -172,7 +172,7 @@ typedef union {
 
 #define RAD_2_DEG(x) ((x) * 180 / 3.14159265f)
 #define SIGN(x) ((x) != 0 ? ((x) > 0 ? 1 : -1) : 0)
-#define CLAMP(x, _max_) (((SIGN(x)) * ((x) > (_max_) ? (_max_) : x)))
+#define CLAMP(x, _max_) ((((x) > (_max_) ? (_max_) : x)))
 #define RESCALE(x, _in_max_, _out_max_) ((x) * (_out_max_) / (_in_max_))
 #define DIRECTION_TO_S2(x) ((x) + 1)
 /* USER CODE END PM */
@@ -1632,8 +1632,9 @@ void StartTiltDetection(void *argument)
 
     osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
     // TODO: fix sign
-    system_information.fields.tilt_roll = (int8_t)(CLAMP(roll, MAX_REPORTED_TILT_DEG));
-    system_information.fields.tilt_pitch = (int8_t)(CLAMP(pitch, MAX_REPORTED_TILT_DEG));
+    system_information.fields.tilt_roll = (int8_t)(SIGN(roll) * CLAMP(abs(roll), MAX_REPORTED_TILT_DEG));
+    system_information.fields.tilt_pitch = (int8_t)(SIGN(pitch) * CLAMP(abs(pitch), MAX_REPORTED_TILT_DEG));
+    printf("%.3f %d / %.3f %d\n", roll, system_information.fields.tilt_roll, pitch, system_information.fields.tilt_pitch);
     osMutexRelease(mutexSystemInfoHandle);
     
     osDelayUntil(tick);
