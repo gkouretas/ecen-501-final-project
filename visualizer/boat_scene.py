@@ -122,11 +122,12 @@ class BoatVisualizerScene(GLViewWidget):
         painter.setFont(QFont("Courier", 8, weight = QFont.Weight.Bold))
         
         # Draw text
-        painter.drawText(15, 15, f"Orientation: {self._controller.heading:.3f} deg")
-        painter.drawText(15, 25, f"X: {self._controller.x:.3f} mm")
-        painter.drawText(15, 35, f"Y: {self._controller.y:.3f} mm")
-        painter.drawText(15, 45, f"Delta: {self._controller.delta:.3f} deg")
-        painter.drawText(15, 55, f"Velocity: {self._controller.velocity:.3f} mm/s")
+        painter.drawText(15, 15, f"STM32 Timestamp: {self._controller.timestamp} ms")
+        painter.drawText(15, 25, f"Orientation: {self._controller.heading:.3f} deg")
+        painter.drawText(15, 35, f"X: {self._controller.x:.3f} mm")
+        painter.drawText(15, 45, f"Y: {self._controller.y:.3f} mm")
+        painter.drawText(15, 55, f"Delta: {self._controller.delta:.3f} deg")
+        painter.drawText(15, 65, f"Velocity: {self._controller.velocity:.3f} mm/s")
         
         # End painter
         painter.end()

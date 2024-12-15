@@ -23,6 +23,7 @@ class BoatController:
         # Generic factor for scaling speed
         self._kv = 1.0
         
+        self._ts = 0
         self._x = 0.0
         self._y = 0.0
         self._velocity = 0.0
@@ -32,6 +33,10 @@ class BoatController:
         self._steering = 0.0
         
         self._depth = 0.0
+                        
+    @property
+    def timestamp(self):
+        return self._ts                        
                         
     @property
     def depth(self):
@@ -163,6 +168,8 @@ class BoatController:
             packet = self._ble_comms.pop_command()
         except queue.Empty:
             return
+        
+        self._ts = packet.timestamp
         
         print(f"Received packet from timestamp: {packet.timestamp}")
         for state, motor in zip(packet.motor_states, [self._m1, self._m2, self._m3, self._m4]):

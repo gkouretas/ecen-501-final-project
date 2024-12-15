@@ -91,7 +91,7 @@ typedef struct {
 typedef enum{
 	PWM_OK = 0,
 	PWM_ERROR = 1
-}PWMstatus_t;
+} PWMstatus_t;
 
 typedef struct {
   uint16_t duty_cycle: 7; // 0-100
@@ -145,7 +145,6 @@ typedef union {
 #define STATE_MSG_QUEUE_PRI                   (10)
 #define STATE_MSG_QUEUE_TIMEOUT               (0) // TODO: set timeout when we start servicing this queue
 
-//#define PWM_MAX_VALUE                         (0x7F)
 #define PWM_MAX_VALUE                         (100)
 
 /* USER CODE END PD */
@@ -1225,7 +1224,7 @@ PWMstatus_t initMotorPWM(volatile SystemInformation_t *system_info)
 	{
 		duty_cycle = system_info->fields.motor_statuses[i].duty_cycle;
 
-		if (duty_cycle > 0x7F)
+		if (duty_cycle > PWM_MAX_VALUE)
 		{
 			printf("Duty cycle out of range for motor index: %u", i);
 			duty_cycle = 0;
@@ -1624,7 +1623,7 @@ void StartBoatControl(void *argument)
     	// hard-code motor 0 as "angle" motor
     	system_information.fields.motor_statuses[0].direction = DIRECTION_TO_S2(SIGN(command.fields.cmd.motion.angle));
 		updateMotorDutyCycle(
-			&system_information, 0, abs(RESCALE(command.fields.cmd.motion.angle, UINT16_MAX, PWM_MAX_VALUE))
+			&system_information, 0, abs(RESCALE(command.fields.cmd.motion.angle, INT16_MAX, PWM_MAX_VALUE))
 		);
 
 		// for now, all thrust motors just go forward
