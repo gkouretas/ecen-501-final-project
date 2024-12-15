@@ -104,6 +104,7 @@ typedef union {
 #define THREAD_FLAG_CHECK_MOTOR_TIMEOUT 0x1
 
 #define MOTOR_FAILURE_CHANCE 20.0f // percent chance of motor failure from collision
+#define MOTOR_TIMEOUT_INTERVAL 2000 // motor idle timeount in ms
 
 #define DEPTH_RANGE_MAXIMUM_MM                1000 // 1m
 #define ACCEL_SAMPLING_RATE                   100 // 10 Hz
@@ -289,7 +290,6 @@ const osMutexAttr_t mutexMotorState_attributes = {
 };
 /* USER CODE BEGIN PV */
 VL53l0X_Interface_t *tof_intf = NULL;
-uint32_t motor_timeout = pdMS_TO_TICKS(2000);
 
 volatile MotorState_t motor_states[NUM_MOTORS + NUM_SPARE_MOTORS];
 
@@ -1481,33 +1481,45 @@ void StartTaskSendData(void *argument)
 /* USER CODE END Header_StartTaskMotorTmout */
 void StartTaskMotorTmout(void *argument)
 {
-  /* USER CODE BEGIN StartTaskMotorTmout */
+	/* USER CODE BEGIN StartTaskMotorTmout */
 	uint32_t current_tick;
-	uint32_t idle_start_time [NUM_MOTORS + NUM_SPARE_MOTORS] = {0};
+	uint32_t idle_start_time [NUM_MOTORS + NUM_SPARE_MOTORS] = {osKernelGetTickCount()};
 
-  /* Infinite loop */
-  for(;;)
-  {
-	  osThreadFlagsWait(THREAD_FLAG_CHECK_MOTOR_TIMEOUT, osFlagsWaitAny, osWaitForever);
+	/* Infinite loop */
+	for(;;)
+	{
+		osThreadFlagsWait(THREAD_FLAG_CHECK_MOTOR_TIMEOUT, osFlagsWaitAny, osWaitForever);
 
-	  osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
-	  current_tick = osKernelGetTickCount();
+		osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
+		current_tick = osKernelGetTickCount();
 
-	  for(int i=0; i<(NUM_MOTORS + NUM_SPARE_MOTORS);i++){
-		  if(system_information.fields.motor_statuses[i].is_alive){
-			  if (system_information.fields.motor_statuses[i].duty_cycle == 0 && (idle_start_time[i] - current_tick) >= motor_timeout)
-			  {
-				  system_information.fields.motor_statuses[i].is_idle = true;
-			  }else
-			  {
-				  system_information.fields.motor_statuses[i].is_idle = false;
-				  idle_start_time[i] = current_tick;
-			  }
-		  }
-	  }
-	  osMutexRelease(mutexSystemInfoHandle);
-  }
-  /* USER CODE END StartTaskMotorTmout */
+		for(int i=0; i<(NUM_MOTORS + NUM_SPARE_MOTORS);i++){
+			// only check idle status of active motors
+			if(system_information.fields.motor_statuses[i].is_alive )
+			{
+				// Look at motors that are currently off
+				if (system_information.fields.motor_statuses[i].duty_cycle == 0)
+				{
+					// If motor not already idle, and timeout condition met, set idle
+					if (system_information.fields.motor_statuses[i].is_idle == false
+							&& (current_tick - idle_start_time[i]) >= MOTOR_TIMEOUT_INTERVAL)
+					{
+						system_information.fields.motor_statuses[i].is_idle = true;
+						printf("Motor %d idle\n", i);
+					}
+				}
+				// If motor has non-zero PWN, turn off idle and store time
+				else
+				{
+					system_information.fields.motor_statuses[i].is_idle = false;
+					idle_start_time[i] = current_tick;
+				}
+			}
+		}
+
+		osMutexRelease(mutexSystemInfoHandle);
+	}
+	/* USER CODE END StartTaskMotorTmout */
 }
 
 /* USER CODE BEGIN Header_StartBLETask */
