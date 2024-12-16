@@ -16,7 +16,7 @@ class SpeedBar(QProgressBar):
         
     def keyPressEvent(self, evt):
         key = evt.key()
-        if key == Qt.Key.Key_Space:
+        if key == Qt.Key.Key_G:
             # Increase speed
             self.setValue(min(self.value() + 1, 100))
         elif key == Qt.Key.Key_B:

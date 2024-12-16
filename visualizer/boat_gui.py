@@ -23,7 +23,7 @@ _control_string = \
 "<p><pre>[Left Click]   (Sim): Move camera, (Joystick): Command motorboat direction               </pre></p>" + \
 "<p><pre>[Scroll]       (Sim): Zoom camera in/out                                                 </pre></p>" + \
 "<p><pre>[Scroll Click] (Sim): Move camera                                                        </pre></p>" + \
-"<p><pre>[SPACE]        Increase motorboat thrust                                                 </pre></p>" + \
+"<p><pre>[G]            Increase motorboat thrust                                                 </pre></p>" + \
 "<p><pre>[B]            Decrease motorboat thrust                                                 </pre></p>" + \
 "<p><pre>[H]            Move camera to home position (above boat, facing true north)              </pre></p>" + \
 "<p><pre>[I]            Move camera to an isometric position                                      </pre></p>" + \
@@ -43,7 +43,7 @@ class BoatGUI(QMainWindow):
         self.setCentralWidget(self._main_widget)
 
         self._view = BoatVisualizerScene(controller, b2gl_T)        
-        self._control = ControlInterface(control_callback = controller.transmit_commands)
+        self._control = ControlInterface(controller = controller, control_callback = controller.transmit_commands)
 
         # Set to no focus so that key presses go through the main window
         self._view.setFocusPolicy(Qt.FocusPolicy.NoFocus)    
@@ -74,6 +74,7 @@ class BoatGUI(QMainWindow):
         
     def run(self):
         self._view.run()
+        self._control.run()
         self.showMaximized()
         # self.app.exec()
     

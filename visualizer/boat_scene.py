@@ -128,15 +128,16 @@ class BoatVisualizerScene(GLViewWidget):
         
         # Draw text
         painter.drawText(15, 15, f"STM32 Timestamp: {self._controller.timestamp} ms")
+        painter.drawText(15, 25, f"State: {self._controller.state.name}")
         painter.drawText(15, 35, f"X: {self._controller.x:.3f} mm")
         painter.drawText(15, 45, f"Y: {self._controller.y:.3f} mm")
         painter.drawText(15, 55, f"Delta: {self._controller.delta:.3f} deg")
         painter.drawText(15, 65, f"Velocity: {self._controller.velocity:.3f} mm/s")
-        painter.drawText(15, 25, f"Heading: {self._controller.heading:.3f} deg")
-        painter.drawText(15, 75, f"Roll: {self._controller.roll:.3f} deg")
-        painter.drawText(15, 85, f"Pitch: {self._controller.pitch:.3f} deg")
-        painter.drawText(15, 95, f"Depth: {self._controller.depth} mm")
-        
+        painter.drawText(15, 75, f"Heading: {self._controller.heading:.3f} deg")
+        painter.drawText(15, 85, f"Roll: {self._controller.roll:.3f} deg")
+        painter.drawText(15, 95, f"Pitch: {self._controller.pitch:.3f} deg")
+        painter.drawText(15, 105, f"Depth: {self._controller.depth} mm")
+                
         # End painter
         painter.end()
 

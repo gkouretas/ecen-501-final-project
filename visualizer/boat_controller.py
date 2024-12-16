@@ -2,7 +2,7 @@ import numpy as np
 import queue
 
 from motor_model import Motor
-from ble_listener import MotorboatBLEListener
+from ble_listener import MotorboatBLEListener, BoatState, MotorState
 
 class BoatController:
     def __init__(self, motor_params: Motor.Params, update_rate: float, ble_comms: MotorboatBLEListener):
@@ -24,6 +24,8 @@ class BoatController:
         # Generic factor for scaling speed
         self._kv = 1.0
         
+        self._state = BoatState.BOAT_IDLE
+        self._motor_states = [MotorState(False, False, False) for _ in range(5)]
         self._ts = 0
         self._roll = 0.0
         self._pitch = 0.0
@@ -36,6 +38,10 @@ class BoatController:
         self._steering = 0.0
         
         self._depth = 0
+                 
+    @property
+    def state(self):
+        return self._state
                         
     @property
     def timestamp(self):
@@ -186,7 +192,10 @@ class BoatController:
         self._roll = packet.roll
         self._pitch = packet.pitch
         
+        # Get depth
         self._depth = packet.depth
         
+        i = 0
         for state, motor in zip(packet.motor_states, [self._m1, self._m2, self._m3, self._m4]):
             motor.sim(state.direction * self._v_ref * state.duty_cycle / 100)
+            self._motor_states[i] = state.motor_state

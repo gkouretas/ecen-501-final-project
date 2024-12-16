@@ -38,10 +38,14 @@ class Direction(IntEnum):
     
 @dataclass
 class MotorState:
-    duty_cycle: int
-    timeout: bool
+    is_active: bool
     is_alive: bool
     is_idle: bool
+
+@dataclass
+class MotorStatus:
+    duty_cycle: int
+    motor_state: MotorState
     direction: Direction
     # reserved
 
@@ -58,11 +62,12 @@ class MotorboatPacket:
     roll: int
     pitch: int
     timestamp: int
-    motor_states: list[MotorState]
+    motor_states: list[MotorStatus]
 
 class BoatRequestedCommand(IntEnum):
     RECOVERY_REQUEST = 0
     ANCHOR_BOAT = 1
+    LIFT_ANCHOR = 2
 
 class MotorboatBLEListener:
     def __init__(self, device_name: str, service_desc: str, tx_property: str, rx_property: str, address: str = None):
@@ -72,7 +77,8 @@ class MotorboatBLEListener:
         self._rx_property = rx_property
         
         self._addr: str = address
-        self._tx_queue: ThreadSafeQueue[bytes] = ThreadSafeQueue(maxsize = 3)
+        self._tx_queue_state: ThreadSafeQueue[bytes] = ThreadSafeQueue(maxsize = -1)
+        self._tx_queue_cmd: ThreadSafeQueue[bytes] = ThreadSafeQueue(maxsize = 1)
         self._rx_queue: ThreadSafeQueue[MotorboatPacket] = ThreadSafeQueue(maxsize = 30)
         
         self._client: BleakClient
@@ -106,11 +112,13 @@ class MotorboatBLEListener:
             pitch = struct.unpack('b', bytes([data[4]]))[0],
             timestamp = struct.unpack('L', data[5:9])[0],
             motor_states = [
-                MotorState(
+                MotorStatus(
                     duty_cycle = (data[i] & 0x7F),
-                    timeout = (data[i] >> 7) & 0x1,
-                    is_alive = data[i+1] & 0x1,
-                    is_idle = (data[i+1] >> 1) & 0x1,
+                    motor_state = MotorState(
+                        is_active = (data[i] >> 7) & 0x1,
+                        is_alive = data[i+1] & 0x1,
+                        is_idle = (data[i+1] >> 1) & 0x1,
+                    ),
                     direction = Direction.from_u2((data[i+1] >> 2) & 0x3)
                 ) for i in range(9, len(data)-1, 2)
             ]
@@ -133,6 +141,17 @@ class MotorboatBLEListener:
     async def notification_callback(self, _, data: bytearray):
         self._process_data(data)
         
+    def send_boat_request(self, request: BoatRequestedCommand):
+        packet = struct.pack('B', BoatCommandType.COMMAND_STATE) + \
+                struct.pack('>I', (request << 24) | 0x0)
+        try:
+            self._tx_queue_state.put_nowait(packet)
+        except queue.Full:
+            print(f"Unable to send command")
+            return False
+        
+        return True
+        
     def send_boat_motion_command(self, angle_rad: float, speed_percentage: int):
         angle = int(angle_rad * 32767 / (np.pi/2))
         speed = int(speed_percentage * 65535 / 100)
@@ -141,10 +160,11 @@ class MotorboatBLEListener:
                 struct.pack('H', speed)
                 
         try:
-            self._tx_queue.put_nowait(packet)
+            self._tx_queue_cmd.put_nowait(packet)
         except queue.Full:
-            # print("Tx queue full")
-            return
+            return False
+        
+        return True
 
     def pop_command(self) -> MotorboatPacket:
         return self._rx_queue.get_nowait()
@@ -212,7 +232,7 @@ class MotorboatBLEListener:
             
             # Keep the script running to receive notifications
             while True:
-                print("Yielding read task")
+                # print("Yielding read task")
                 await asyncio.sleep(1.0)
         
         except Exception as e:
@@ -226,19 +246,29 @@ class MotorboatBLEListener:
     async def dispatch_writer(self):
         # cmd_motion = struct.pack('B', 0) + struct.pack('H', 12342) + struct.pack('H', 7891)
         # cmd_status = struct.pack('B', 1) + struct.pack('>I', (1 << 24) | 0x0)
+        packet = None
         while True:
             # Wait for tx queue to get populated
             try:
-                packet = self._tx_queue.get_nowait()
+                packet = self._tx_queue_state.get_nowait()
             except queue.Empty:
-                await asyncio.sleep(0) # yield task
-                continue
+                pass
             
-            print(f"Transmitting packet: {packet}")
+            if packet is None:
+                # If there was no state command, get controller command
+                try:
+                    packet = self._tx_queue_cmd.get_nowait()
+                except queue.Empty:
+                    # yield
+                    await asyncio.sleep(0)
+                    continue
+            
+            # print(f"Transmitting packet: {packet}")
             
             # Transmit packet to the server
             await self._client.write_gatt_char(self._tx_uuid, packet)
-            print("Yielding write task")
+            packet = None
+            # print("Yielding write task")
             await asyncio.sleep(0) # yield task
 
 def main():
