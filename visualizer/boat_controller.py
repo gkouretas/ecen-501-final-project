@@ -38,6 +38,7 @@ class BoatController:
         self._steering = 0.0
         
         self._depth = 0
+        self._c = 0
                  
     @property
     def state(self):
@@ -186,6 +187,10 @@ class BoatController:
         except queue.Empty:
             return
         
+        self._c += 1
+        if self._c % 50 == 0:
+            print(packet)   
+        
         self._ts = packet.timestamp
         
         # Get roll/pitch, data is already in degrees
@@ -195,7 +200,10 @@ class BoatController:
         # Get depth
         self._depth = packet.depth
         
+        self._state = packet.boat_state
+        
         i = 0
         for state, motor in zip(packet.motor_states, [self._m1, self._m2, self._m3, self._m4]):
             motor.sim(state.direction * self._v_ref * state.duty_cycle / 100)
             self._motor_states[i] = state.motor_state
+            i += 1

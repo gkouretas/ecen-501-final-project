@@ -130,6 +130,8 @@ class UserInputWidget(QWidget):
         for motor_index, state in enumerate(self._controller._motor_states):
             self.update_motor_state_color(motor_index, self._state_to_color(state))
     
+        self.update()
+    
     def run(self):
         self._timer = QTimer()
         self._timer.timeout.connect(self.refresh_boat_state)

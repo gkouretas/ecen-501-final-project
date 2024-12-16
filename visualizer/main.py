@@ -28,7 +28,7 @@ def main():
             
     controller = BoatController(
         motor_params = Motor.Params(**_motor_params),
-        update_rate = 1.0 / 30.0, # Match sim rate to desired FPS
+        update_rate = 1.0 / 60.0, # Match sim rate to desired FPS
         ble_comms = ble_comms
     )
     
