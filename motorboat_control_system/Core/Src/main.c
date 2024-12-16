@@ -135,17 +135,13 @@ typedef union {
 } SystemInformation_t;
 /* USER CODE END PTD */
 
-// control_active:
-// collision_detected
-// depth_too_low
-// anchor_lifted
-
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define THREAD_FLAG_DRIVING 0x1
 #define THREAD_FLAG_DEPTH_READING_READY 0x1
 #define THREAD_FLAG_COLLISION_DETECTED 0x1
 #define THREAD_FLAG_CHECK_MOTOR_TIMEOUT 0x1
+#define THREAD_FLAG_STATE_UPDATE 0X1
 
 #define MOTOR_FAILURE_CHANCE 20.0f // percent chance of motor failure from collision
 #define MOTOR_TIMEOUT_INTERVAL 2000 // motor idle timeount in ms
@@ -198,7 +194,7 @@ osThreadId_t defaultTaskHandle;
 const osThreadAttr_t defaultTask_attributes = {
   .name = "defaultTask",
   .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityNormal,
+  .priority = (osPriority_t) osPriorityLow,
 };
 /* Definitions for boatSMTask */
 osThreadId_t boatSMTaskHandle;
@@ -210,7 +206,7 @@ const osThreadAttr_t boatSMTask_attributes = {
   .cb_size = sizeof(boatSMTaskControlBlock),
   .stack_mem = &boatSMTaskBuffer[0],
   .stack_size = sizeof(boatSMTaskBuffer),
-  .priority = (osPriority_t) osPriorityLow,
+  .priority = (osPriority_t) osPriorityHigh,
 };
 /* Definitions for depthDetectTask */
 osThreadId_t depthDetectTaskHandle;
@@ -222,7 +218,7 @@ const osThreadAttr_t depthDetectTask_attributes = {
   .cb_size = sizeof(depthDetectTaskControlBlock),
   .stack_mem = &depthDetectTaskBuffer[0],
   .stack_size = sizeof(depthDetectTaskBuffer),
-  .priority = (osPriority_t) osPriorityLow,
+  .priority = (osPriority_t) osPriorityAboveNormal1,
 };
 /* Definitions for serviceBLETask */
 osThreadId_t serviceBLETaskHandle;
@@ -234,7 +230,7 @@ const osThreadAttr_t serviceBLETask_attributes = {
   .cb_size = sizeof(serviceBLETaskControlBlock),
   .stack_mem = &serviceBLETaskBuffer[0],
   .stack_size = sizeof(serviceBLETaskBuffer),
-  .priority = (osPriority_t) osPriorityHigh2,
+  .priority = (osPriority_t) osPriorityRealtime,
 };
 /* Definitions for motorTmoutTask */
 osThreadId_t motorTmoutTaskHandle;
@@ -246,7 +242,7 @@ const osThreadAttr_t motorTmoutTask_attributes = {
   .cb_size = sizeof(motorTmoutTaskControlBlock),
   .stack_mem = &motorTmoutTaskBuffer[0],
   .stack_size = sizeof(motorTmoutTaskBuffer),
-  .priority = (osPriority_t) osPriorityLow,
+  .priority = (osPriority_t) osPriorityBelowNormal,
 };
 /* Definitions for tiltDetectTask */
 osThreadId_t tiltDetectTaskHandle;
@@ -258,7 +254,7 @@ const osThreadAttr_t tiltDetectTask_attributes = {
   .cb_size = sizeof(tiltDetectionTaControlBlock),
   .stack_mem = &tiltDetectionTaBuffer[0],
   .stack_size = sizeof(tiltDetectionTaBuffer),
-  .priority = (osPriority_t) osPriorityLow,
+  .priority = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for collisionDetect */
 osThreadId_t collisionDetectHandle;
@@ -270,7 +266,7 @@ const osThreadAttr_t collisionDetect_attributes = {
   .cb_size = sizeof(collisionDetectControlBlock),
   .stack_mem = &collisionDetectBuffer[0],
   .stack_size = sizeof(collisionDetectBuffer),
-  .priority = (osPriority_t) osPriorityLow,
+  .priority = (osPriority_t) osPriorityAboveNormal,
 };
 /* Definitions for boatControlTask */
 osThreadId_t boatControlTaskHandle;
@@ -282,7 +278,7 @@ const osThreadAttr_t boatControlTask_attributes = {
   .cb_size = sizeof(boatControlTaskControlBlock),
   .stack_mem = &boatControlTaskBuffer[0],
   .stack_size = sizeof(boatControlTaskBuffer),
-  .priority = (osPriority_t) osPriorityNormal,
+  .priority = (osPriority_t) osPriorityHigh1,
 };
 /* Definitions for queueBoatCommand */
 osMessageQueueId_t queueBoatCommandHandle;
@@ -302,13 +298,13 @@ const osTimerAttr_t timerMotorTimeout_attributes = {
   .cb_mem = &motorTimerControlBlock,
   .cb_size = sizeof(motorTimerControlBlock),
 };
-/* Definitions for timerSensorRead */
-osTimerId_t timerSensorReadHandle;
-osStaticTimerDef_t timerSensorReadControlBlock;
-const osTimerAttr_t timerSensorRead_attributes = {
-  .name = "timerSensorRead",
-  .cb_mem = &timerSensorReadControlBlock,
-  .cb_size = sizeof(timerSensorReadControlBlock),
+/* Definitions for timerStateRead */
+osTimerId_t timerStateReadHandle;
+osStaticTimerDef_t timerStateReadControlBlock;
+const osTimerAttr_t timerStateRead_attributes = {
+  .name = "timerStateRead",
+  .cb_mem = &timerStateReadControlBlock,
+  .cb_size = sizeof(timerStateReadControlBlock),
 };
 /* Definitions for mutexSystemInfo */
 osMutexId_t mutexSystemInfoHandle;
@@ -345,11 +341,11 @@ volatile static SystemInformation_t system_information = {
 		  .control_active = false,
 		  .depth_too_low = false,
 		  .motor_statuses = {
-			  {.is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0)},
-			  {.is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0)},
-			  {.is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0)},
-			  {.is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0)},
-			  {.is_alive = true, .is_idle = true,  .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0)}
+			  {.is_active = true, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0)},
+			  {.is_active = true, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(25)},
+			  {.is_active = true, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(50)},
+			  {.is_active = true, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(75)},
+			  {.is_active = false, .is_alive = true, .is_idle = true,  .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0)}
 		  }
 	}
 };
@@ -377,15 +373,15 @@ void StartTiltDetection(void *argument);
 void startCollisionDetectTask(void *argument);
 void StartBoatControl(void *argument);
 void callbackMotorTimeout(void *argument);
-void callbackSensorRead(void *argument);
+void callbackStateRead(void *argument);
 
 /* USER CODE BEGIN PFP */
 PWMstatus_t initMotorPWM(volatile SystemInformation_t *system_info);
 PWMstatus_t updateMotorDutyCycle(volatile SystemInformation_t *system_info);
-void clearPWM(volatile SystemInformation_t *system_info);
-bool is_driving_valid(volatile SystemInformation_t *system_info);
+void stopMotors(volatile SystemInformation_t *system_info);
 bool are_motors_moving(volatile SystemInformation_t *system_info);
-void activate_motors(volatile SystemInformation_t *system_info);
+bool are_all_motors_idle(volatile SystemInformation_t *system_info);
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -505,8 +501,8 @@ int main(void)
   /* creation of timerMotorTimeout */
   timerMotorTimeoutHandle = osTimerNew(callbackMotorTimeout, osTimerPeriodic, NULL, &timerMotorTimeout_attributes);
 
-  /* creation of timerSensorRead */
-  timerSensorReadHandle = osTimerNew(callbackSensorRead, osTimerPeriodic, NULL, &timerSensorRead_attributes);
+  /* creation of timerStateRead */
+  timerStateReadHandle = osTimerNew(callbackStateRead, osTimerPeriodic, NULL, &timerStateRead_attributes);
 
   /* USER CODE BEGIN RTOS_TIMERS */
   /* start timers, add new ones, ... */
@@ -514,7 +510,7 @@ int main(void)
   {
 	  Error_Handler();
   }
-  if(osTimerStart(timerSensorReadHandle, 100) != osOK)
+  if(osTimerStart(timerStateReadHandle, 100) != osOK)
   {
 	  Error_Handler();
   }
@@ -1267,42 +1263,36 @@ PWMstatus_t updateMotorDutyCycle(volatile SystemInformation_t *system_info)
 	for (size_t motor_index = 0; motor_index < NUM_MOTORS + NUM_SPARE_MOTORS; ++motor_index)
 	{
 		duty_cycle = system_info->fields.motor_statuses[motor_index].duty_cycle;
+
+		// Validate duty_cyle in range 0-100
 		if (duty_cycle > PWM_MAX_VALUE)
 		{
 			printf("Duty cycle out of range for motor index: %u\n", motor_index);
 			return PWM_ERROR;
 		}
 
-		if (system_info->fields.motor_statuses[motor_index].is_alive)
-		{
-			__HAL_TIM_SET_COMPARE(motorTimerConfig[motor_index].timer,
-					    		motorTimerConfig[motor_index].channel, DUTY_TO_CCR(duty_cycle));
+		// Move motor out of idle state if receiving nonzero duty cycle
+		if (system_info->fields.motor_statuses[motor_index].is_idle && duty_cycle > 0){
+			system_info->fields.motor_statuses[motor_index].is_idle = false;
 		}
+		// Write new duty cycle to motor timer channel
+		__HAL_TIM_SET_COMPARE(motorTimerConfig[motor_index].timer,
+							    		motorTimerConfig[motor_index].channel, DUTY_TO_CCR(duty_cycle));
 	}
-
     return PWM_OK;
 }
 
-void clearPWM(volatile SystemInformation_t *system_info)
+// Set PWM of all motors to 0
+void stopMotors(volatile SystemInformation_t *system_info)
 {
-	// TODO: clear duty cycle commands
-}
-
-bool is_driving_valid(volatile SystemInformation_t *system_info)
-{
-	// TODO:
 	for (size_t motor_index = 0; motor_index < NUM_MOTORS + NUM_SPARE_MOTORS; ++motor_index)
 	{
-		if (system_info->fields.motor_statuses[motor_index].is_active &&
-				system_info->fields.motor_statuses[motor_index].duty_cycle == 0)
-		{
-			return false;
-		}
+		system_info->fields.motor_statuses[motor_index].duty_cycle = DUTY_TO_CCR(0);
 	}
-
-	return true;
+	updateMotorDutyCycle(system_info);
 }
 
+// Check for nonzero PWM on all active motors
 bool are_motors_moving(volatile SystemInformation_t *system_info)
 {
 	for (size_t motor_index = 0; motor_index < NUM_MOTORS + NUM_SPARE_MOTORS; ++motor_index)
@@ -1313,19 +1303,23 @@ bool are_motors_moving(volatile SystemInformation_t *system_info)
 			return true;
 		}
 	}
-
 	return false;
 }
 
-void activate_motors(volatile SystemInformation_t *system_info)
+// Check for idle on all active motors
+bool are_all_motors_idle(volatile SystemInformation_t *system_info)
 {
 	for (size_t motor_index = 0; motor_index < NUM_MOTORS + NUM_SPARE_MOTORS; ++motor_index)
 	{
-		if (system_info->fields.motor_statuses[motor_index].is_alive)
+		if (system_info->fields.motor_statuses[motor_index].is_active)
 		{
-			system_info->fields.motor_statuses[motor_index].is_active = true;
+			if(!system_info->fields.motor_statuses[motor_index].is_idle)
+			{
+				return false;
+			}
 		}
 	}
+	return true;
 }
 
 /* USER CODE END 4 */
@@ -1364,45 +1358,51 @@ void StartTaskBoatSM(void *argument)
 	/* Infinite loop */
 	for(;;)
 	{
+		// Wait for timer interrupt to update state
+		osThreadFlagsWait(THREAD_FLAG_STATE_UPDATE, osFlagsWaitAny, 500);
 		osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
 
+		// Check for commands to process
 		received_cmd = (osMessageQueueGetCount(queueBoatReqStateHandle) > 0);
 		if (received_cmd)
 		{
 			osMessageQueueGet(queueBoatReqStateHandle, (void *)&cmd, &pri, osWaitForever);
 		}
     
+		// State machine to handle boat state transitions
 		switch (system_information.fields.boat_state)
 		{
 		case kBoatIdle:
-			// Stopped exit: User input applied (i.e. gas pedal)
+			// User sends anchor request -> anchored
 			if (received_cmd && cmd.fields.cmd.state.state == kAnchorBoatRequest)
 			{
 				system_information.fields.boat_state = kBoatAnchored;
 			}
+			// Collision detected or insufficient depth -> error
+			else if (system_information.fields.collision_detected || system_information.fields.depth_too_low)
+			{
+				system_information.fields.boat_state = kBoatError;
+				stopMotors(&system_information);
+				// TODO: disable command processor here
+			}
+			//  Motors are active and have nonzero duty cycle -> driving
 			else if (are_motors_moving(&system_information))
 			{
-				// Check if any motors are active
-				activate_motors(&system_information);
 				system_information.fields.boat_state = kBoatDriving;
+				updateMotorDutyCycle(&system_information);
 				// TODO: unblock command processor here
-//				osThreadFlagsSet(readDataTaskHandle, THREAD_FLAG_DRIVING);
 			}
 			break;
 		case kBoatDriving:
-			// Driving exit: User input removed
-			//               Collision detected or depth exceeded -> anchored
+			// Collision detected or insufficient depth -> error
 			if (system_information.fields.collision_detected || system_information.fields.depth_too_low)
 			{
-				// Clear flags
-//				osThreadFlagsSet(readDataTaskHandle, 0x0);
-				// TODO: disable command processor here
-
-				// If an error occurs (i.e. collision detection or depth exceeded),
-				clearPWM(&system_information);
 				system_information.fields.boat_state = kBoatError;
+				stopMotors(&system_information);
+				// TODO: disable command processor here
 			}
-			else if (!are_motors_moving(&system_information))
+			// All motors idle -> idle
+			else if (are_all_motors_idle(&system_information))
 			{
 				system_information.fields.boat_state = kBoatIdle;
 			}
@@ -1412,13 +1412,14 @@ void StartTaskBoatSM(void *argument)
 			}
 			break;
 		case kBoatAnchored:
+			// User sends lift anchor request -> idle
 			if (cmd.fields.cmd.state.state == kLiftAnchorRequest)
 			{
-				// Once the anchor is listed, we now move back to "idle" state
 				system_information.fields.boat_state = kBoatIdle;
 			}
 			break;
 		case kBoatError:
+			// User sends recovery request -> idle
 			if (cmd.fields.cmd.state.state == kRecoveryRequest)
 			{
 				// Request to recover from the error
@@ -1586,7 +1587,7 @@ void StartTaskMotorTmout(void *argument)
 						printf("Motor %d idle\n", i);
 					}
 				}
-				// If motor has non-zero PWN, turn off idle and store time
+				// If motor has non-zero PWM, turn off idle and store time
 				else
 				{
 					system_information.fields.motor_statuses[i].is_idle = false;
@@ -1594,7 +1595,6 @@ void StartTaskMotorTmout(void *argument)
 				}
 			}
 		}
-
 		osMutexRelease(mutexSystemInfoHandle);
 	}
   /* USER CODE END StartTaskMotorTmout */
@@ -1668,7 +1668,6 @@ void startCollisionDetectTask(void *argument)
 		// Set collision flag
 		osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
 		system_information.fields.collision_detected = true;
-		osMutexRelease(mutexSystemInfoHandle);
 
 		// Determine if collision caused motor failure
 		if (normalizedRandNum < MOTOR_FAILURE_CHANCE)
@@ -1677,11 +1676,10 @@ void startCollisionDetectTask(void *argument)
 			int failed_motor_index = (int)(randNum % (NUM_MOTORS + NUM_SPARE_MOTORS));
 			printf("motor %d failed\n", failed_motor_index);
 
-			osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
 			system_information.fields.motor_statuses[failed_motor_index].is_alive = false;
-			osMutexRelease(mutexSystemInfoHandle);
+			system_information.fields.motor_statuses[failed_motor_index].duty_cycle = DUTY_TO_CCR(0);
 		}
-
+		osMutexRelease(mutexSystemInfoHandle);
 	}
   /* USER CODE END startCollisionDetectTask */
 }
@@ -1705,7 +1703,7 @@ void StartBoatControl(void *argument)
     {
       // Once we get a command from the queue, apply it to our motors
     	osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
-    	    	// hard-code motor 0 as "angle" motor
+    	 // hard-code motor 0 as "angle" motor
     	system_information.fields.motor_statuses[0].direction = DIRECTION_TO_S2(SIGN(command.fields.cmd.motion.angle));
     	system_information.fields.motor_statuses[0].duty_cycle = abs(RESCALE(command.fields.cmd.motion.angle, INT16_MAX, PWM_MAX_VALUE));
 
@@ -1730,12 +1728,12 @@ void callbackMotorTimeout(void *argument)
   /* USER CODE END callbackMotorTimeout */
 }
 
-/* callbackSensorRead function */
-void callbackSensorRead(void *argument)
+/* callbackStateRead function */
+void callbackStateRead(void *argument)
 {
-  /* USER CODE BEGIN callbackSensorRead */
-
-  /* USER CODE END callbackSensorRead */
+  /* USER CODE BEGIN callbackStateRead */
+	osThreadFlagsSet(motorTmoutTaskHandle, THREAD_FLAG_STATE_UPDATE);
+  /* USER CODE END callbackStateRead */
 }
 
 /**
