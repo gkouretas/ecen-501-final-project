@@ -120,10 +120,9 @@ typedef struct {
 typedef union {
 	 struct __attribute__((packed)) {
 		  BoatState_t boat_state: 2;
-		  bool control_active: 1;
 		  bool collision_detected: 1;
 		  bool depth_too_low: 1;
-		  uint8_t reserved : 3; // for alignment                       // 1 byte
+		  uint8_t reserved : 4; // for alignment                       // 1 byte
 		  uint16_t depth_mm: 16;                                           // 2 bytes
 		  int8_t tilt_roll: 8;                                            // 1 byte
 		  int8_t tilt_pitch: 8;                                           // 1 byte
@@ -157,6 +156,14 @@ typedef union {
 #define STATE_MSG_QUEUE_TIMEOUT               (0) // TODO: set timeout when we start servicing this queue
 
 #define PWM_MAX_VALUE                         (100)
+
+#define ENABLE_DEBUG_OUTPUT                   (false)
+
+#if ENABLE_DEBUG_OUTPUT == true
+#define LOG(...) printf(__VA_ARGS__)
+#else
+#define LOG(...)
+#endif
 
 /* USER CODE END PD */
 
@@ -338,7 +345,6 @@ volatile static SystemInformation_t system_information = {
 	.fields = {
 		  .boat_state = kBoatIdle,
 		  .collision_detected = false,
-		  .control_active = false,
 		  .depth_too_low = false,
 		  .motor_statuses = {
 			  {.is_active = true, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0)},
@@ -462,20 +468,20 @@ int main(void)
 
   if (BSP_ACCELERO_Init() != 0)
   {
-    printf("Failed to initialize acceleromter\n");
+    LOG("Failed to initialize acceleromter\n");
     Error_Handler();
   }
 
   if (sizeof(system_information.buffer) > 20)
   {
-    printf("Packet size too for BLE transmission\n");
+    LOG("Packet size too for BLE transmission\n");
     Error_Handler();
   }
 
   tof_intf = vl53l0x_init(&hi2c2, 0x52, VL53L0X_XSHUT_GPIO_Port, VL53L0X_XSHUT_Pin);
   if (tof_intf == NULL)
   {
-	  printf("Failed to initialize VL53L0X\n");
+	  LOG("Failed to initialize VL53L0X\n");
 	  Error_Handler();
   }
   /* USER CODE END 2 */
@@ -1237,7 +1243,7 @@ PWMstatus_t initMotorPWM(volatile SystemInformation_t *system_info)
 
 		if (duty_cycle > PWM_MAX_VALUE)
 		{
-			printf("Duty cycle out of range for motor index: %u", i);
+			LOG("Duty cycle out of range for motor index: %u", i);
 			duty_cycle = 0;
 			return PWM_ERROR;
 		}
@@ -1249,7 +1255,7 @@ PWMstatus_t initMotorPWM(volatile SystemInformation_t *system_info)
 		// Start PWM on channel
 		if(HAL_TIM_PWM_Start(motorTimerConfig[i].timer,motorTimerConfig[i].channel) != HAL_OK)
 		{
-			printf("Failed to start PWM for motor index: %u", i);
+			LOG("Failed to start PWM for motor index: %u", i);
 			return PWM_ERROR;
 		}
 	}
@@ -1267,7 +1273,7 @@ PWMstatus_t updateMotorDutyCycle(volatile SystemInformation_t *system_info)
 		// Validate duty_cyle in range 0-100
 		if (duty_cycle > PWM_MAX_VALUE)
 		{
-			printf("Duty cycle out of range for motor index: %u\n", motor_index);
+			LOG("Duty cycle out of range for motor index: %u\n", motor_index);
 			return PWM_ERROR;
 		}
 
@@ -1455,12 +1461,12 @@ void StartTaskDepthDetect(void *argument)
   {
 	  if (vl53l0x_prepare_sample(tof_intf) != HAL_OK)
 	  {
-		  printf("Failed to prepare range sample\n");
+		  LOG("Failed to prepare range sample\n");
 	  }
 	  if ((osThreadFlagsWait(THREAD_FLAG_DEPTH_READING_READY, osFlagsWaitAll, 1000) & osFlagsError) != 0)
 	  {
 		  // Flag timeout
-		  printf("Error waiting for range ISR\n");
+		  LOG("Error waiting for range ISR\n");
 		  vl53l0x_read_range_single(tof_intf, &range, true);
 	  }
 	  else
@@ -1469,6 +1475,7 @@ void StartTaskDepthDetect(void *argument)
 	  }
 
 	  osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
+	  LOG("Depth: %d\n", range);
 	  system_information.fields.depth_mm = range;
 	  system_information.fields.depth_too_low = range < DEPTH_RANGE_MAXIMUM_MM;
 	  osMutexRelease(mutexSystemInfoHandle);
@@ -1512,30 +1519,24 @@ void StartBLECommTask(void *argument)
 		if (buf_rx != NULL)
 		{
 			// Sample is ready to enqueue
-//			printf("Received %d bytes: ", n_received_bytes);
-//			for (uint8_t i = 0; i < n_received_bytes; ++i)
-//			{
-//				printf("%c", buf_rx[i]);
-//			}
-//			printf("\n");
 			if (n_received_bytes != 5)
 			{
-				printf("Incompatible buffer sizes (%d != 5)\n", n_received_bytes);
+				LOG("Incompatible buffer sizes (%d != 5)\n", n_received_bytes);
 			}
 			else
 			{
 				cmd = (BoatCommand_t *)buf_rx;
-//				printf("raw: %02X%02X%02X%02X%02X\n", cmd->buffer[0], cmd->buffer[1], cmd->buffer[2], cmd->buffer[3], cmd->buffer[4]);
+//				LOG("raw: %02X%02X%02X%02X%02X\n", cmd->buffer[0], cmd->buffer[1], cmd->buffer[2], cmd->buffer[3], cmd->buffer[4]);
 
 				switch (cmd->fields.cmd_type)
 				{
 					case kCommandMotion:
-//						printf("%d %d %d\n", cmd->fields.cmd_type, cmd->fields.cmd.motion.angle, cmd->fields.cmd.motion.speed);
+//						LOG("%d %d %d\n", cmd->fields.cmd_type, cmd->fields.cmd.motion.angle, cmd->fields.cmd.motion.speed);
 						// No timeout, just put if there is any space
 						osMessageQueuePut(queueBoatCommandHandle, (void *)cmd->buffer, COMMAND_MSG_QUEUE_PRI, COMMAND_MSG_QUEUE_TIMEOUT);
 						break;
 					case kCommandState:
-//						printf("%d %d %ld\n", cmd->fields.cmd_type, cmd->fields.cmd.state.state, cmd->fields.cmd.state.reserved);
+//						LOG("%d %d %ld\n", cmd->fields.cmd_type, cmd->fields.cmd.state.state, cmd->fields.cmd.state.reserved);
 						// TODO: state queue...
 						osMessageQueuePut(queueBoatReqStateHandle, (void *)cmd->buffer, STATE_MSG_QUEUE_PRI, STATE_MSG_QUEUE_TIMEOUT);
 						break;
@@ -1584,7 +1585,7 @@ void StartTaskMotorTmout(void *argument)
 							&& (current_tick - idle_start_time[i]) >= MOTOR_TIMEOUT_INTERVAL)
 					{
 						system_information.fields.motor_statuses[i].is_idle = true;
-						printf("Motor %d idle\n", i);
+						LOG("Motor %d idle\n", i);
 					}
 				}
 				// If motor has non-zero PWM, turn off idle and store time
@@ -1631,10 +1632,8 @@ void StartTiltDetection(void *argument)
     );
 
     osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
-    // TODO: fix sign
     system_information.fields.tilt_roll = (int8_t)(SIGN(roll) * CLAMP(abs(roll), MAX_REPORTED_TILT_DEG));
     system_information.fields.tilt_pitch = (int8_t)(SIGN(pitch) * CLAMP(abs(pitch), MAX_REPORTED_TILT_DEG));
-    printf("%.3f %d / %.3f %d\n", roll, system_information.fields.tilt_roll, pitch, system_information.fields.tilt_pitch);
     osMutexRelease(mutexSystemInfoHandle);
     
     osDelayUntil(tick);
@@ -1674,7 +1673,7 @@ void startCollisionDetectTask(void *argument)
 		{
 			// determine which motor failed, spare can also fail
 			int failed_motor_index = (int)(randNum % (NUM_MOTORS + NUM_SPARE_MOTORS));
-			printf("motor %d failed\n", failed_motor_index);
+			LOG("motor %d failed\n", failed_motor_index);
 
 			system_information.fields.motor_statuses[failed_motor_index].is_alive = false;
 			system_information.fields.motor_statuses[failed_motor_index].duty_cycle = DUTY_TO_CCR(0);

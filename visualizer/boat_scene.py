@@ -58,6 +58,22 @@ class BoatVisualizerScene(GLViewWidget):
         )
         
     def _init_water_mesh(self) -> GLMeshItem:
+        _meshdata = self._get_water_mesh()
+        
+        _mesh = GLMeshItem(
+            meshdata = _meshdata,
+            smooth = False,
+            drawFaces = True,
+            drawEdges = False,
+            color = (0, 0, 1, 0.5)
+        )
+        
+        # Uncomment for water to be transparent        
+        # _mesh.setGLOptions('additive')
+
+        return _mesh
+    
+    def _get_water_mesh(self):
         _meshdata = MeshData.cylinder(
             rows = 25, 
             cols = 25, 
@@ -73,18 +89,7 @@ class BoatVisualizerScene(GLViewWidget):
             np.concatenate((_circle, _meshdata.vertexes()))
         )
         
-        _mesh = GLMeshItem(
-            meshdata = _meshdata,
-            smooth = False,
-            drawFaces = True,
-            drawEdges = False,
-            color = (0, 0, 1, 0.5)
-        )
-        
-        # Uncomment for water to be transparent        
-        # _mesh.setGLOptions('additive')
-
-        return _mesh
+        return _meshdata
     
     def home_camera_params(self):
         return {
@@ -123,13 +128,14 @@ class BoatVisualizerScene(GLViewWidget):
         
         # Draw text
         painter.drawText(15, 15, f"STM32 Timestamp: {self._controller.timestamp} ms")
-        painter.drawText(15, 25, f"Orientation: {self._controller.heading:.3f} deg")
         painter.drawText(15, 35, f"X: {self._controller.x:.3f} mm")
         painter.drawText(15, 45, f"Y: {self._controller.y:.3f} mm")
         painter.drawText(15, 55, f"Delta: {self._controller.delta:.3f} deg")
         painter.drawText(15, 65, f"Velocity: {self._controller.velocity:.3f} mm/s")
+        painter.drawText(15, 25, f"Heading: {self._controller.heading:.3f} deg")
         painter.drawText(15, 75, f"Roll: {self._controller.roll:.3f} deg")
         painter.drawText(15, 85, f"Pitch: {self._controller.pitch:.3f} deg")
+        painter.drawText(15, 95, f"Depth: {self._controller.depth} mm")
         
         # End painter
         painter.end()
@@ -144,13 +150,15 @@ class BoatVisualizerScene(GLViewWidget):
         self.refresh()
     
     def refresh(self):
-        # TODO: get BLE packet and set boat translation + water depth accordingly...
         self._controller.run_kinematics()
         self._boat_mesh_item.setTransform(self._home_tform)
         self._boat_mesh_item.translate(dx = self._controller.x, dy = self._controller.y, dz = 0.0, local = False)
         self._boat_mesh_item.rotate(angle = self._controller.heading, x = 0, y = 0, z = 1, local = True)
         self._boat_mesh_item.rotate(angle = self._controller.roll, x = 1, y = 0, z = 0, local = True)
         self._boat_mesh_item.rotate(angle = self._controller.pitch, x = 0, y = 1, z = 0, local = True)
+             
+        # Update visual of water depth      
+        self._water_mesh_item.setMeshData(meshdata = self._get_water_mesh())
                         
         self.update()
         
