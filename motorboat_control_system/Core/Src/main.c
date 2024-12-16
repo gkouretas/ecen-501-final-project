@@ -33,6 +33,7 @@
 #include "app_bluenrg_ms.h"
 #include "sample_service.h"
 #include "hci_tl.h"
+#include "stm32l475e_iot01_tsensor.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -128,7 +129,7 @@ typedef union {
 		  int8_t tilt_pitch: 8;                                           // 1 byte
 		  uint32_t tick: 32;                                               // 4 bytes
 		  MotorStatus_t motor_statuses[NUM_MOTORS + NUM_SPARE_MOTORS]; // 10 bytes
-		  uint8_t reserved2;                                           // 1 byte, padding for clean 20 piece
+		  uint8_t temperature;                                           // 1 byte
 	} fields;
 	uint8_t buffer[BLE_PACKET_SIZE];
 } SystemInformation_t;
@@ -141,6 +142,12 @@ typedef union {
 #define THREAD_FLAG_COLLISION_DETECTED 0x1
 #define THREAD_FLAG_CHECK_MOTOR_TIMEOUT 0x1
 #define THREAD_FLAG_STATE_UPDATE 0X1
+#define THREAD_FLAG_READ_TEMP 0x1
+#define THREAD_FLAG_READ_TILT 0x1
+
+#define TIMER_PERIOD_STATE_MACHINE 100 // ms
+#define TIMER_PERIOD_READ_SENSORS 100 // ms
+#define TIMER_PERIOD_TIMEOUT 100 // ms
 
 #define MOTOR_FAILURE_CHANCE 20.0f // percent chance of motor failure from collision
 #define MOTOR_TIMEOUT_INTERVAL 2000 // motor idle timeount in ms
@@ -225,7 +232,7 @@ const osThreadAttr_t depthDetectTask_attributes = {
   .cb_size = sizeof(depthDetectTaskControlBlock),
   .stack_mem = &depthDetectTaskBuffer[0],
   .stack_size = sizeof(depthDetectTaskBuffer),
-  .priority = (osPriority_t) osPriorityAboveNormal1,
+  .priority = (osPriority_t) osPriorityAboveNormal2,
 };
 /* Definitions for serviceBLETask */
 osThreadId_t serviceBLETaskHandle;
@@ -287,6 +294,18 @@ const osThreadAttr_t boatControlTask_attributes = {
   .stack_size = sizeof(boatControlTaskBuffer),
   .priority = (osPriority_t) osPriorityHigh1,
 };
+/* Definitions for readTempTask */
+osThreadId_t readTempTaskHandle;
+uint32_t readTempTaskBuffer[ 128 ];
+osStaticThreadDef_t readTempTaskControlBlock;
+const osThreadAttr_t readTempTask_attributes = {
+  .name = "readTempTask",
+  .cb_mem = &readTempTaskControlBlock,
+  .cb_size = sizeof(readTempTaskControlBlock),
+  .stack_mem = &readTempTaskBuffer[0],
+  .stack_size = sizeof(readTempTaskBuffer),
+  .priority = (osPriority_t) osPriorityLow,
+};
 /* Definitions for queueBoatCommand */
 osMessageQueueId_t queueBoatCommandHandle;
 const osMessageQueueAttr_t queueBoatCommand_attributes = {
@@ -312,6 +331,14 @@ const osTimerAttr_t timerStateRead_attributes = {
   .name = "timerStateRead",
   .cb_mem = &timerStateReadControlBlock,
   .cb_size = sizeof(timerStateReadControlBlock),
+};
+/* Definitions for timerReadSensors */
+osTimerId_t timerReadSensorsHandle;
+osStaticTimerDef_t timerReadSensorsControlBlock;
+const osTimerAttr_t timerReadSensors_attributes = {
+  .name = "timerReadSensors",
+  .cb_mem = &timerReadSensorsControlBlock,
+  .cb_size = sizeof(timerReadSensorsControlBlock),
 };
 /* Definitions for mutexSystemInfo */
 osMutexId_t mutexSystemInfoHandle;
@@ -348,9 +375,9 @@ volatile static SystemInformation_t system_information = {
 		  .depth_too_low = false,
 		  .motor_statuses = {
 			  {.is_active = true, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0)},
-			  {.is_active = true, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(25)},
-			  {.is_active = true, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(50)},
-			  {.is_active = true, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(75)},
+			  {.is_active = true, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0)},
+			  {.is_active = true, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0)},
+			  {.is_active = true, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0)},
 			  {.is_active = false, .is_alive = true, .is_idle = true,  .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0)}
 		  }
 	}
@@ -378,8 +405,10 @@ void StartTaskMotorTmout(void *argument);
 void StartTiltDetection(void *argument);
 void startCollisionDetectTask(void *argument);
 void StartBoatControl(void *argument);
+void StartReadTemperature(void *argument);
 void callbackMotorTimeout(void *argument);
 void callbackStateRead(void *argument);
+void callbackReadSensors(void *argument);
 
 /* USER CODE BEGIN PFP */
 PWMstatus_t initMotorPWM(volatile SystemInformation_t *system_info);
@@ -462,6 +491,8 @@ int main(void)
   MX_USART1_UART_Init();
   MX_RNG_Init();
   /* USER CODE BEGIN 2 */
+  BSP_TSENSOR_Init();
+
   initMotorPWM(&system_information);
 
   MX_BlueNRG_MS_Init();
@@ -510,16 +541,23 @@ int main(void)
   /* creation of timerStateRead */
   timerStateReadHandle = osTimerNew(callbackStateRead, osTimerPeriodic, NULL, &timerStateRead_attributes);
 
+  /* creation of timerReadSensors */
+  timerReadSensorsHandle = osTimerNew(callbackReadSensors, osTimerPeriodic, NULL, &timerReadSensors_attributes);
+
   /* USER CODE BEGIN RTOS_TIMERS */
   /* start timers, add new ones, ... */
-  if(osTimerStart(timerMotorTimeoutHandle, 100) != osOK)
+  if(osTimerStart(timerMotorTimeoutHandle, TIMER_PERIOD_TIMEOUT) != osOK)
   {
 	  Error_Handler();
   }
-  if(osTimerStart(timerStateReadHandle, 100) != osOK)
+  if(osTimerStart(timerStateReadHandle, TIMER_PERIOD_STATE_MACHINE) != osOK)
   {
 	  Error_Handler();
   }
+  if(osTimerStart(timerReadSensorsHandle, TIMER_PERIOD_READ_SENSORS) != osOK)
+   {
+ 	  Error_Handler();
+   }
   /* USER CODE END RTOS_TIMERS */
 
   /* Create the queue(s) */
@@ -541,7 +579,7 @@ int main(void)
   boatSMTaskHandle = osThreadNew(StartTaskBoatSM, NULL, &boatSMTask_attributes);
 
   /* creation of depthDetectTask */
-  depthDetectTaskHandle = osThreadNew(StartTaskDepthDetect, NULL, &depthDetectTask_attributes);
+  //depthDetectTaskHandle = osThreadNew(StartTaskDepthDetect, NULL, &depthDetectTask_attributes);
 
   /* creation of serviceBLETask */
   serviceBLETaskHandle = osThreadNew(StartBLECommTask, NULL, &serviceBLETask_attributes);
@@ -557,6 +595,9 @@ int main(void)
 
   /* creation of boatControlTask */
   boatControlTaskHandle = osThreadNew(StartBoatControl, NULL, &boatControlTask_attributes);
+
+  /* creation of readTempTask */
+  readTempTaskHandle = osThreadNew(StartReadTemperature, NULL, &readTempTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -1610,35 +1651,34 @@ void StartTaskMotorTmout(void *argument)
 /* USER CODE END Header_StartTiltDetection */
 void StartTiltDetection(void *argument)
 {
-  /* USER CODE BEGIN StartTiltDetection */
-  int16_t accel_buf[3];
-  float roll, pitch;
-  uint32_t tick = osKernelGetTickCount();
-  /* Infinite loop */
-  for(;;)
-  {
-    tick += ACCEL_SAMPLING_RATE;
-    BSP_ACCELERO_AccGetXYZ(accel_buf);
+	/* USER CODE BEGIN StartTiltDetection */
+	int16_t accel_buf[3];
+	float roll, pitch;
+	/* Infinite loop */
+	for(;;)
+	{
+		// Wait for timer interrupt to execute
+		osThreadFlagsWait(THREAD_FLAG_READ_TILT, osFlagsWaitAny, osWaitForever);
 
-    // Roll
-    roll = RAD_2_DEG(atan2(accel_buf[1], accel_buf[2]));
+		BSP_ACCELERO_AccGetXYZ(accel_buf);
 
-    // Pitch
-    pitch = RAD_2_DEG(
-      atan2(
-        -accel_buf[0], 
-        sqrtf(accel_buf[1]*accel_buf[1] + accel_buf[2]*accel_buf[2])
-      )
-    );
+		// Roll
+		roll = RAD_2_DEG(atan2(accel_buf[1], accel_buf[2]));
 
-    osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
-    system_information.fields.tilt_roll = (int8_t)(SIGN(roll) * CLAMP(abs(roll), MAX_REPORTED_TILT_DEG));
-    system_information.fields.tilt_pitch = (int8_t)(SIGN(pitch) * CLAMP(abs(pitch), MAX_REPORTED_TILT_DEG));
-    osMutexRelease(mutexSystemInfoHandle);
-    
-    osDelayUntil(tick);
-  }
-  /* USER CODE END StartTiltDetection */
+		// Pitch
+		pitch = RAD_2_DEG(
+				atan2(
+						-accel_buf[0],
+						sqrtf(accel_buf[1]*accel_buf[1] + accel_buf[2]*accel_buf[2])
+				)
+		);
+
+		osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
+		system_information.fields.tilt_roll = (int8_t)(SIGN(roll) * CLAMP(abs(roll), MAX_REPORTED_TILT_DEG));
+		system_information.fields.tilt_pitch = (int8_t)(SIGN(pitch) * CLAMP(abs(pitch), MAX_REPORTED_TILT_DEG));
+		osMutexRelease(mutexSystemInfoHandle);
+	}
+	/* USER CODE END StartTiltDetection */
 }
 
 /* USER CODE BEGIN Header_startCollisionDetectTask */
@@ -1719,6 +1759,30 @@ void StartBoatControl(void *argument)
   /* USER CODE END StartBoatControl */
 }
 
+/* USER CODE BEGIN Header_StartReadTemperature */
+/**
+* @brief Function implementing the readTempTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartReadTemperature */
+void StartReadTemperature(void *argument)
+{
+	/* USER CODE BEGIN StartReadTemperature */
+	/* Infinite loop */
+	for(;;)
+	{
+		// Wait for timer interrupt to execute
+		osThreadFlagsWait(THREAD_FLAG_READ_TEMP, osFlagsWaitAny, osWaitForever);
+
+		// Read temp into system info struct
+		osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
+		system_information.fields.temperature = (uint8_t)BSP_TSENSOR_ReadTemp();
+		osMutexRelease(mutexSystemInfoHandle);
+	}
+	/* USER CODE END StartReadTemperature */
+}
+
 /* callbackMotorTimeout function */
 void callbackMotorTimeout(void *argument)
 {
@@ -1733,6 +1797,15 @@ void callbackStateRead(void *argument)
   /* USER CODE BEGIN callbackStateRead */
 	osThreadFlagsSet(motorTmoutTaskHandle, THREAD_FLAG_STATE_UPDATE);
   /* USER CODE END callbackStateRead */
+}
+
+/* callbackReadSensors function */
+void callbackReadSensors(void *argument)
+{
+  /* USER CODE BEGIN callbackReadSensors */
+	osThreadFlagsSet(readTempTaskHandle, THREAD_FLAG_READ_TEMP);
+	osThreadFlagsSet(tiltDetectTaskHandle, THREAD_FLAG_READ_TILT);
+  /* USER CODE END callbackReadSensors */
 }
 
 /**
