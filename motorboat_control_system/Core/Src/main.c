@@ -146,8 +146,8 @@ typedef union {
 #define MOTOR_TIMEOUT_INTERVAL 2000 // motor idle timeount in ms
 
 #define DEPTH_RANGE_MAXIMUM_MM                500 // 500mm
-#define ACCEL_SAMPLING_RATE                   250 // 4 Hz
-#define DEPTH_SAMPLING_RATE                   1000 // 1 Hz
+#define ACCEL_SAMPLING_INTERVAL               250 // 4 Hz
+#define DEPTH_SAMPLING_INTERVAL               1000 // 1 Hz
 #define BLE_TRANSMISSION_RATE                 50  // 20 Hz. TODO: increase as high as we can...
 #define MAX_REPORTED_TILT_DEG                 120 // within u8
 
@@ -347,6 +347,7 @@ volatile static SystemInformation_t system_information = {
 		  .boat_state = kBoatIdle,
 		  .collision_detected = false,
 		  .depth_too_low = false,
+		  .depth_mm = 8000,
 		  .motor_statuses = {
 			  {.is_active = true, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0)},
 			  {.is_active = true, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0)},
@@ -1468,7 +1469,7 @@ void StartTaskDepthDetect(void *argument)
   /* Infinite loop */
   for(;;)
   {
-	  tick += DEPTH_SAMPLING_RATE;
+	  tick += DEPTH_SAMPLING_INTERVAL;
 	  if (vl53l0x_prepare_sample(tof_intf) != HAL_OK)
 	  {
 		  LOG("Failed to prepare range sample\n");
@@ -1477,18 +1478,16 @@ void StartTaskDepthDetect(void *argument)
 	  {
 		  // Flag timeout
 		  LOG("Error waiting for range ISR\n");
-		  vl53l0x_read_range_single(tof_intf, &range, true);
 	  }
 	  else
 	  {
 		  vl53l0x_read_range_single(tof_intf, &range, false);
+		  osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
+  //	  LOG("Depth: %d\n", range);
+		  system_information.fields.depth_mm = range;
+		  system_information.fields.depth_too_low = range < DEPTH_RANGE_MAXIMUM_MM;
+		  osMutexRelease(mutexSystemInfoHandle);
 	  }
-
-	  osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
-//	  LOG("Depth: %d\n", range);
-	  system_information.fields.depth_mm = range;
-	  system_information.fields.depth_too_low = range < DEPTH_RANGE_MAXIMUM_MM;
-	  osMutexRelease(mutexSystemInfoHandle);
 
 	  osDelayUntil(tick);
   }
@@ -1629,7 +1628,7 @@ void StartTiltDetection(void *argument)
   /* Infinite loop */
   for(;;)
   {
-    tick += ACCEL_SAMPLING_RATE;
+    tick += ACCEL_SAMPLING_INTERVAL;
     BSP_ACCELERO_AccGetXYZ(accel_buf);
 
     // Roll
