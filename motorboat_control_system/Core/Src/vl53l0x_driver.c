@@ -13,7 +13,7 @@ do { \
 	status = vl53l0x_i2c_read(ptr_intf, reg, (uint8_t *)&(buf), sizeof((buf))); \
 	if (status != HAL_OK) \
 	{ \
-		printf("i2c err [code: %d] (%s) (%s):%d\n", status, __FILE__, __func__, __line__); \
+		printf("i2c err [code: %d] (%s) (%s):%d\n", status, __FILE__, __func__, __LINE__); \
 		return status; \
 	} \
 } while (0)
@@ -23,7 +23,7 @@ do { \
 	status = HAL_I2C_Master_Transmit(ptr_intf->i2c_handle, ptr_intf->i2c_addr, (uint8_t *)&(data), sizeof((data)), HAL_MAX_DELAY); \
 	if (status != HAL_OK) \
 	{ \
-		printf("i2c reg write err [code: %d] (%s) (%s):%d\n", status, __FILE__, __func__, __line__); \
+		printf("i2c reg write err [code: %d] (%s) (%s):%d\n", status, __FILE__, __func__, __LINE__); \
 		return status; \
 	} \
 } while (0)
@@ -33,7 +33,7 @@ do { \
 	status = vl53l0x_i2c_write_packet(ptr_intf, reg, data); \
 	if (status != HAL_OK) \
 	{ \
-		printf("i2c reg write err [code: %d] (%s) (%s):%d\n", status, __FILE__, __func__, __line__); \
+		printf("i2c reg write err [code: %d] (%s) (%s):%d\n", status, __FILE__, __func__, __LINE__); \
 		return status; \
 	} \
 } while (0)
