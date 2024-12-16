@@ -581,7 +581,7 @@ int main(void)
   boatSMTaskHandle = osThreadNew(StartTaskBoatSM, NULL, &boatSMTask_attributes);
 
   /* creation of depthDetectTask */
-  //depthDetectTaskHandle = osThreadNew(StartTaskDepthDetect, NULL, &depthDetectTask_attributes);
+  depthDetectTaskHandle = osThreadNew(StartTaskDepthDetect, NULL, &depthDetectTask_attributes);
 
   /* creation of serviceBLETask */
   serviceBLETaskHandle = osThreadNew(StartBLECommTask, NULL, &serviceBLETask_attributes);
@@ -1515,7 +1515,7 @@ void StartTaskDepthDetect(void *argument)
 	  {
 		  LOG("Failed to prepare range sample\n");
 	  }
-	  if ((osThreadFlagsWait(THREAD_FLAG_DEPTH_READING_READY, osFlagsWaitAll, 1000) & osFlagsError) != 0)
+	  if ((osThreadFlagsWait(THREAD_FLAG_DEPTH_READING_READY, osFlagsWaitAny, 1000) & osFlagsError) != 0)
 	  {
 		  // Flag timeout
 		  LOG("Error waiting for range ISR\n");
@@ -1665,22 +1665,22 @@ void StartTiltDetection(void *argument)
   /* USER CODE BEGIN StartTiltDetection */
   int16_t accel_buf[3];
   float roll, pitch;
-  uint32_t tick = osKernelGetTickCount();
+
   /* Infinite loop */
-  for(;;)
-  {
-    tick += ACCEL_SAMPLING_INTERVAL;
-    BSP_ACCELERO_AccGetXYZ(accel_buf);
+	for(;;)
+	{
+		osThreadFlagsWait(THREAD_FLAG_READ_TILT, osFlagsWaitAny, osWaitForever);
+		BSP_ACCELERO_AccGetXYZ(accel_buf);
 
 		// Roll
 		roll = RAD_2_DEG(atan2(accel_buf[1], accel_buf[2]));
 
 		// Pitch
 		pitch = RAD_2_DEG(
-				atan2(
-						-accel_buf[0],
-						sqrtf(accel_buf[1]*accel_buf[1] + accel_buf[2]*accel_buf[2])
-				)
+			atan2(
+				-accel_buf[0],
+				sqrtf(accel_buf[1]*accel_buf[1] + accel_buf[2]*accel_buf[2])
+			)
 		);
 
 		osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
@@ -1716,7 +1716,7 @@ void startCollisionDetectTask(void *argument)
 
 		// Set collision flag
 		osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
-    LOG("collision detected\n");
+		LOG("collision detected\n");
 		system_information.fields.collision_detected = true;
 
 		// Determine if collision caused motor failure

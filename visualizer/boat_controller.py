@@ -33,6 +33,7 @@ class BoatController:
         self._y = 0.0
         self._velocity = 0.0
         self._delta = 0.0
+        self._temperature = 0
         
         self._heading = 0.0 
         self._steering = 0.0
@@ -43,6 +44,10 @@ class BoatController:
     @property
     def state(self):
         return self._state
+                        
+    @property
+    def temperature(self):
+        return self._temperature
                         
     @property
     def timestamp(self):
@@ -200,10 +205,15 @@ class BoatController:
         # Get depth
         self._depth = packet.depth
         
+        # Get temperature
+        self._temperature = packet.temperature
+        
+        # Get the boat state
         self._state = packet.boat_state
         
         i = 0
         for state, motor in zip(packet.motor_states, [self._m1, self._m2, self._m3, self._m4]):
+            # Simualte the motors
             motor.sim(state.direction * self._v_ref * state.duty_cycle / 100)
             self._motor_states[i] = state.motor_state
             i += 1

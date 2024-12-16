@@ -63,6 +63,7 @@ class MotorboatPacket:
     pitch: int
     timestamp: int
     motor_states: list[MotorStatus]
+    temperature: int
 
 class BoatRequestedCommand(IntEnum):
     RECOVERY_REQUEST = 0
@@ -121,7 +122,8 @@ class MotorboatBLEListener:
                     ),
                     direction = Direction.from_u2((data[i+1] >> 2) & 0x3)
                 ) for i in range(9, len(data)-1, 2)
-            ]
+            ],
+            temperature = data[19]
         )
             
         return packet
