@@ -382,7 +382,7 @@ volatile static SystemInformation_t system_information = {
 		  .boat_state = kBoatIdle,
 		  .collision_detected = false,
 		  .depth_too_low = false,
-		  .depth_mm = 8000,
+		  .depth_mm = 0,
 		  .motor_statuses = {
 			  {.is_active = true, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0), .type = kMotorSteering},
 			  {.is_active = true, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0), .type = kMotorThrust},
@@ -1382,21 +1382,41 @@ bool are_all_motors_idle(volatile SystemInformation_t *system_info)
 
 void activate_spare_motor(volatile SystemInformation_t *system_info)
 {
-	size_t spare_index;
+	int spare_index = NUM_MOTORS + NUM_SPARE_MOTORS;
 
-	for (size_t motor_index = (NUM_MOTORS + NUM_SPARE_MOTORS - 1); motor_index >= 0; --motor_index)
+	for (int motor_index = (NUM_MOTORS + NUM_SPARE_MOTORS - 1); motor_index >= 0; --motor_index)
 	{
+		printf("%d %d %d\n", motor_index, system_info->fields.motor_statuses[motor_index].type, system_info->fields.motor_statuses[motor_index].is_alive);
+		// Find spare
 		if (system_info->fields.motor_statuses[motor_index].type == kMotorSpare &&
 				system_info->fields.motor_statuses[motor_index].is_alive)
 		{
 			spare_index = motor_index;
+			break;
 		}
-		else if (system_info->fields.motor_statuses[motor_index].type != kMotorSpare &&
-				!system_info->fields.motor_statuses[motor_index].is_alive)
+	}
+
+	if (spare_index != (NUM_MOTORS + NUM_SPARE_MOTORS))
+	{
+		// Replace with broken motor
+		for (int motor_index = (NUM_MOTORS + NUM_SPARE_MOTORS - 1); motor_index >= 0; --motor_index)
 		{
-			system_info->fields.motor_statuses[spare_index].type = system_info->fields.motor_statuses[motor_index].type;
-			system_info->fields.motor_statuses[spare_index].is_active = true;
+			printf("%d %d %d\n", motor_index, system_info->fields.motor_statuses[motor_index].type, system_info->fields.motor_statuses[motor_index].is_alive);
+			if (system_info->fields.motor_statuses[motor_index].type != kMotorSpare &&
+								!system_info->fields.motor_statuses[motor_index].is_alive)
+			{
+
+				system_info->fields.motor_statuses[spare_index].type = system_info->fields.motor_statuses[motor_index].type;
+				system_info->fields.motor_statuses[spare_index].is_active = true;
+
+				// Exit function
+				break;
+			}
 		}
+	}
+	else
+	{
+		printf("No available spare...\n");
 	}
 }
 
@@ -1794,14 +1814,25 @@ void StartBoatControl(void *argument)
       // Once we get a command from the queue, apply it to our motors
     	osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
     	 // hard-code motor 0 as "angle" motor
-    	system_information.fields.motor_statuses[0].direction = DIRECTION_TO_S2(SIGN(command.fields.cmd.motion.angle));
-    	system_information.fields.motor_statuses[0].duty_cycle = abs(RESCALE(command.fields.cmd.motion.angle, INT16_MAX, PWM_MAX_VALUE));
 
-		// for now, all thrust motors just go forward
-    	for (size_t i = 1; i <= 3; ++i)
+    	for (size_t i = 0; i <= NUM_MOTORS + NUM_SPARE_MOTORS; ++i)
     	{
-    		system_information.fields.motor_statuses[i].direction = DIRECTION_TO_S2(kDirectionCCW);
-    		system_information.fields.motor_statuses[i].duty_cycle = abs(RESCALE(command.fields.cmd.motion.speed, UINT16_MAX, PWM_MAX_VALUE));
+    		switch (system_information.fields.motor_statuses[i].type)
+    		{
+    			case kMotorSteering:
+    				system_information.fields.motor_statuses[0].direction = DIRECTION_TO_S2(SIGN(command.fields.cmd.motion.angle));
+					system_information.fields.motor_statuses[0].duty_cycle = abs(RESCALE(command.fields.cmd.motion.angle, INT16_MAX, PWM_MAX_VALUE));
+					break;
+    			case kMotorThrust:
+    				// For now, all thrust motors are unidirectional
+    	    		system_information.fields.motor_statuses[i].direction = DIRECTION_TO_S2(kDirectionCCW);
+    	    		system_information.fields.motor_statuses[i].duty_cycle = abs(RESCALE(command.fields.cmd.motion.speed, UINT16_MAX, PWM_MAX_VALUE));
+    	    		break;
+    			default:
+    				// Ignore other motor types
+    				break;
+
+    		}
     	}
 
 		osMutexRelease(mutexSystemInfoHandle);
