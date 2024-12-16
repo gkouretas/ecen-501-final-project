@@ -56,7 +56,8 @@ typedef enum {
 typedef enum {
 	kRecoveryRequest = 0,
 	kAnchorBoatRequest = 1,
-	kLiftAnchorRequest = 2
+	kLiftAnchorRequest = 2,
+	kSpareMotorRequest = 3
 } RequestedState_t;
 
 #define RX_BUFFER_SIZE (5)
@@ -95,13 +96,20 @@ typedef enum{
 	PWM_ERROR = 1
 } PWMstatus_t;
 
+typedef enum{
+	kMotorSteering = 0,
+	kMotorThrust = 1,
+	kMotorSpare = 2
+}MotorType_t;
+
 typedef struct {
   uint16_t duty_cycle: 7; // 0-100
   bool is_active: 1;
   bool is_alive: 1;
   bool is_idle: 1;
   uint8_t direction: 2; // represent as u2 int (CW: 0, NULL: 1, CCW: 2)
-  uint8_t reserved : 4; // for alignment
+  MotorType_t type: 2;
+  uint8_t reserved: 2; // for alignment
 } MotorStatus_t; // total size: 2 bytes
 
 // is_active: motor that's one of the four active or not
@@ -375,11 +383,11 @@ volatile static SystemInformation_t system_information = {
 		  .collision_detected = false,
 		  .depth_too_low = false,
 		  .motor_statuses = {
-			  {.is_active = true, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0)},
-			  {.is_active = true, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0)},
-			  {.is_active = true, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0)},
-			  {.is_active = true, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0)},
-			  {.is_active = false, .is_alive = true, .is_idle = true,  .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0)}
+			  {.is_active = true, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0), .type = kMotorSteering},
+			  {.is_active = true, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0), .type = kMotorThrust},
+			  {.is_active = true, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0), .type = kMotorThrust},
+			  {.is_active = true, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0), .type = kMotorThrust},
+			  {.is_active = false, .is_alive = true, .is_idle = true,  .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0),.type = kMotorSpare}
 		  }
 	}
 };
@@ -417,6 +425,7 @@ PWMstatus_t updateMotorDutyCycle(volatile SystemInformation_t *system_info);
 void stopMotors(volatile SystemInformation_t *system_info);
 bool are_motors_moving(volatile SystemInformation_t *system_info);
 bool are_all_motors_idle(volatile SystemInformation_t *system_info);
+bool spare_motor_available(volatile SystemInformation_t *system_info);
 
 /* USER CODE END PFP */
 
@@ -580,7 +589,7 @@ int main(void)
   boatSMTaskHandle = osThreadNew(StartTaskBoatSM, NULL, &boatSMTask_attributes);
 
   /* creation of depthDetectTask */
-  //depthDetectTaskHandle = osThreadNew(StartTaskDepthDetect, NULL, &depthDetectTask_attributes);
+  depthDetectTaskHandle = osThreadNew(StartTaskDepthDetect, NULL, &depthDetectTask_attributes);
 
   /* creation of serviceBLETask */
   serviceBLETaskHandle = osThreadNew(StartBLECommTask, NULL, &serviceBLETask_attributes);
@@ -1370,6 +1379,26 @@ bool are_all_motors_idle(volatile SystemInformation_t *system_info)
 	return true;
 }
 
+void activate_spare_motor(volatile SystemInformation_t *system_info)
+{
+	size_t spare_index;
+
+	for (size_t motor_index = (NUM_MOTORS + NUM_SPARE_MOTORS - 1); motor_index >= 0; --motor_index)
+	{
+		if (system_info->fields.motor_statuses[motor_index].type == kMotorSpare &&
+				system_info->fields.motor_statuses[motor_index].is_alive)
+		{
+			spare_index = motor_index;
+		}
+		else if (system_info->fields.motor_statuses[motor_index].type != kMotorSpare &&
+				!system_info->fields.motor_statuses[motor_index].is_alive)
+		{
+			system_info->fields.motor_statuses[spare_index].type = system_info->fields.motor_statuses[motor_index].type;
+			system_info->fields.motor_statuses[spare_index].is_active = true;
+		}
+	}
+}
+
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_StartDefaultTask */
@@ -1474,17 +1503,24 @@ void StartTaskBoatSM(void *argument)
 			break;
 		case kBoatError:
 			// User sends recovery request -> idle
-			if (received_cmd && cmd.fields.cmd.state.state == kRecoveryRequest)
+			if (received_cmd)
 			{
-				// Request to recover from the error
-				if (!system_information.fields.depth_too_low)
+				if (cmd.fields.cmd.state.state == kRecoveryRequest)
 				{
-					LOG("error -> idle\n");
-					// Clear error
-					system_information.fields.collision_detected = false;
+					// Request to recover from the error
+					if (!system_information.fields.depth_too_low)
+					{
+						LOG("error -> idle\n");
+						// Clear error
+						system_information.fields.collision_detected = false;
 
-					// If error conditions have cleared, return to "idle" state
-					system_information.fields.boat_state = kBoatIdle;
+						// If error conditions have cleared, return to "idle" state
+						system_information.fields.boat_state = kBoatIdle;
+					}
+				}
+				else if (cmd.fields.cmd.state.state == kSpareMotorRequest)
+				{
+
 				}
 			}
 			break;
