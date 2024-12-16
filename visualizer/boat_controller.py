@@ -2,7 +2,7 @@ import numpy as np
 import queue
 
 from motor_model import Motor
-from ble_listener import MotorboatBLEListener, BoatState, MotorState
+from ble_listener import MotorboatBLEListener, BoatState, MotorState, MotorType
 
 class BoatController:
     def __init__(self, motor_params: Motor.Params, update_rate: float, ble_comms: MotorboatBLEListener):
@@ -33,6 +33,7 @@ class BoatController:
         self._y = 0.0
         self._velocity = 0.0
         self._delta = 0.0
+        self._temperature = 0
         
         self._heading = 0.0 
         self._steering = 0.0
@@ -43,6 +44,10 @@ class BoatController:
     @property
     def state(self):
         return self._state
+                        
+    @property
+    def temperature(self):
+        return self._temperature
                         
     @property
     def timestamp(self):
@@ -181,6 +186,11 @@ class BoatController:
     def velocity(self):
         return self._velocity
     
+    @property
+    def thurst_motors(self):
+        # hacky
+        return [self._m2, self._m3, self._m4]
+    
     def _apply_commands(self):
         try:
             packet = self._ble_comms.pop_command()
@@ -200,10 +210,21 @@ class BoatController:
         # Get depth
         self._depth = packet.depth
         
+        # Get temperature
+        self._temperature = packet.temperature
+        
+        # Get the boat state
         self._state = packet.boat_state
         
-        i = 0
-        for state, motor in zip(packet.motor_states, [self._m1, self._m2, self._m3, self._m4]):
+        thurst_motor_index = 0
+        for state in packet.motor_states:
+            # Simualte the motors
+            if state.motor_state.motor_type == MotorType.STEERING and state.motor_state.is_alive:
+                motor = self._m1
+            elif state.motor_state.motor_type == MotorType.THRUST and state.motor_state.is_alive:
+                motor = self.thurst_motors[thurst_motor_index]
+                thurst_motor_index += 1
+            else:
+                continue
+                
             motor.sim(state.direction * self._v_ref * state.duty_cycle / 100)
-            self._motor_states[i] = state.motor_state
-            i += 1

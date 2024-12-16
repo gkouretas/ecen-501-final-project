@@ -161,8 +161,8 @@ typedef union {
 #define MOTOR_TIMEOUT_INTERVAL 2000 // motor idle timeount in ms
 
 #define DEPTH_RANGE_MAXIMUM_MM                500 // 500mm
-#define ACCEL_SAMPLING_RATE                   250 // 4 Hz
-#define DEPTH_SAMPLING_RATE                   1000 // 1 Hz
+#define ACCEL_SAMPLING_INTERVAL               250 // 4 Hz
+#define DEPTH_SAMPLING_INTERVAL               1000 // 1 Hz
 #define BLE_TRANSMISSION_RATE                 50  // 20 Hz. TODO: increase as high as we can...
 #define MAX_REPORTED_TILT_DEG                 120 // within u8
 
@@ -382,6 +382,7 @@ volatile static SystemInformation_t system_information = {
 		  .boat_state = kBoatIdle,
 		  .collision_detected = false,
 		  .depth_too_low = false,
+		  .depth_mm = 8000,
 		  .motor_statuses = {
 			  {.is_active = true, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0), .type = kMotorSteering},
 			  {.is_active = true, .is_alive = true, .is_idle = false, .direction = kDirectionNull, .duty_cycle = DUTY_TO_CCR(0), .type = kMotorThrust},
@@ -1545,27 +1546,25 @@ void StartTaskDepthDetect(void *argument)
   /* Infinite loop */
   for(;;)
   {
-	  tick += DEPTH_SAMPLING_RATE;
+	  tick += DEPTH_SAMPLING_INTERVAL;
 	  if (vl53l0x_prepare_sample(tof_intf) != HAL_OK)
 	  {
 		  LOG("Failed to prepare range sample\n");
 	  }
-	  if ((osThreadFlagsWait(THREAD_FLAG_DEPTH_READING_READY, osFlagsWaitAll, 1000) & osFlagsError) != 0)
+	  if ((osThreadFlagsWait(THREAD_FLAG_DEPTH_READING_READY, osFlagsWaitAny, 1000) & osFlagsError) != 0)
 	  {
 		  // Flag timeout
 		  LOG("Error waiting for range ISR\n");
-		  vl53l0x_read_range_single(tof_intf, &range, true);
 	  }
 	  else
 	  {
 		  vl53l0x_read_range_single(tof_intf, &range, false);
+		  osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
+  //	  LOG("Depth: %d\n", range);
+		  system_information.fields.depth_mm = range;
+		  system_information.fields.depth_too_low = range < DEPTH_RANGE_MAXIMUM_MM;
+		  osMutexRelease(mutexSystemInfoHandle);
 	  }
-
-	  osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
-//	  LOG("Depth: %d\n", range);
-	  system_information.fields.depth_mm = range;
-	  system_information.fields.depth_too_low = range < DEPTH_RANGE_MAXIMUM_MM;
-	  osMutexRelease(mutexSystemInfoHandle);
 
 	  osDelayUntil(tick);
   }
@@ -1699,15 +1698,14 @@ void StartTaskMotorTmout(void *argument)
 /* USER CODE END Header_StartTiltDetection */
 void StartTiltDetection(void *argument)
 {
-	/* USER CODE BEGIN StartTiltDetection */
-	int16_t accel_buf[3];
-	float roll, pitch;
-	/* Infinite loop */
+  /* USER CODE BEGIN StartTiltDetection */
+  int16_t accel_buf[3];
+  float roll, pitch;
+
+  /* Infinite loop */
 	for(;;)
 	{
-		// Wait for timer interrupt to execute
 		osThreadFlagsWait(THREAD_FLAG_READ_TILT, osFlagsWaitAny, osWaitForever);
-
 		BSP_ACCELERO_AccGetXYZ(accel_buf);
 
 		// Roll
@@ -1715,10 +1713,10 @@ void StartTiltDetection(void *argument)
 
 		// Pitch
 		pitch = RAD_2_DEG(
-				atan2(
-						-accel_buf[0],
-						sqrtf(accel_buf[1]*accel_buf[1] + accel_buf[2]*accel_buf[2])
-				)
+			atan2(
+				-accel_buf[0],
+				sqrtf(accel_buf[1]*accel_buf[1] + accel_buf[2]*accel_buf[2])
+			)
 		);
 
 		osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
@@ -1754,7 +1752,7 @@ void startCollisionDetectTask(void *argument)
 
 		// Set collision flag
 		osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
-    LOG("collision detected\n");
+		LOG("collision detected\n");
 		system_information.fields.collision_detected = true;
 
 		// Determine if collision caused motor failure

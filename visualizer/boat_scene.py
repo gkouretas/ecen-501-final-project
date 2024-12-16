@@ -137,6 +137,7 @@ class BoatVisualizerScene(GLViewWidget):
         painter.drawText(15, 85, f"Roll: {self._controller.roll:.3f} deg")
         painter.drawText(15, 95, f"Pitch: {self._controller.pitch:.3f} deg")
         painter.drawText(15, 105, f"Depth: {self._controller.depth} mm")
+        painter.drawText(15, 115, f"Temperature: {self._controller.temperature} °C")
                 
         # End painter
         painter.end()
