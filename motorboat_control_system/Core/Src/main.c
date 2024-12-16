@@ -426,7 +426,7 @@ PWMstatus_t updateMotorDutyCycle(volatile SystemInformation_t *system_info);
 void stopMotors(volatile SystemInformation_t *system_info);
 bool are_motors_moving(volatile SystemInformation_t *system_info);
 bool are_all_motors_idle(volatile SystemInformation_t *system_info);
-bool spare_motor_available(volatile SystemInformation_t *system_info);
+void activate_spare_motor(volatile SystemInformation_t *system_info);
 
 /* USER CODE END PFP */
 
@@ -1508,6 +1508,7 @@ void StartTaskBoatSM(void *argument)
 			// User sends recovery request -> idle
 			if (received_cmd)
 			{
+				// Attempt to recover if user requests
 				if (cmd.fields.cmd.state.state == kRecoveryRequest)
 				{
 					// Request to recover from the error
@@ -1521,9 +1522,10 @@ void StartTaskBoatSM(void *argument)
 						system_information.fields.boat_state = kBoatIdle;
 					}
 				}
+				// Activate spare motor if user requests
 				else if (cmd.fields.cmd.state.state == kSpareMotorRequest)
 				{
-				  activate_spare_motor(&system_information);
+					activate_spare_motor(&system_information);
 				}
 			}
 			break;
