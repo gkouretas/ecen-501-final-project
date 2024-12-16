@@ -137,6 +137,7 @@ class UserInputWidget(QWidget):
         
     def refresh_boat_state(self):
         for motor_index, state in enumerate(self._controller._motor_states):
+            # print(f"{motor_index} -> {self._state_to_color(state)}")
             self.update_motor_state_color(motor_index, self._state_to_color(state))
     
         self.update()

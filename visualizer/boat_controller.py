@@ -217,7 +217,9 @@ class BoatController:
         self._state = packet.boat_state
         
         thurst_motor_index = 0
-        for state in packet.motor_states:
+        for motor_index, state in enumerate(packet.motor_states):
+            self._motor_states[motor_index] = state.motor_state
+            
             # Simualte the motors
             if state.motor_state.motor_type == MotorType.STEERING and state.motor_state.is_alive:
                 motor = self._m1
@@ -227,4 +229,8 @@ class BoatController:
             else:
                 continue
                 
-            motor.sim(state.direction * self._v_ref * state.duty_cycle / 100)
+            if self._state == BoatState.BOAT_DRIVING:
+                motor.sim(state.direction * self._v_ref * state.duty_cycle / 100)
+            else:
+                # Do not apply any voltage to the motors if we are not requesting to drive
+                motor.sim(0)

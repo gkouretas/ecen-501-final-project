@@ -127,6 +127,7 @@ class MotorboatBLEListener:
                         is_active = (data[i] >> 7) & 0x1,
                         is_alive = data[i+1] & 0x1,
                         is_idle = (data[i+1] >> 1) & 0x1,
+                        motor_type = ((data[i+1] >> 4) & 0x3)
                     ),
                     direction = Direction.from_u2((data[i+1] >> 2) & 0x3)
                 ) for i in range(9, len(data)-1, 2)

@@ -1345,7 +1345,7 @@ void stopMotors(volatile SystemInformation_t *system_info)
 {
 	for (size_t motor_index = 0; motor_index < NUM_MOTORS + NUM_SPARE_MOTORS; ++motor_index)
 	{
-		system_info->fields.motor_statuses[motor_index].duty_cycle = DUTY_TO_CCR(0);
+		system_info->fields.motor_statuses[motor_index].duty_cycle = 0;
 	}
 	updateMotorDutyCycle(system_info);
 }
@@ -1455,14 +1455,15 @@ void StartTaskBoatSM(void *argument)
 			if (received_cmd && cmd.fields.cmd.state.state == kAnchorBoatRequest)
 			{
 				LOG("idle -> anchored\n");
+				stopMotors(&system_information);
 				system_information.fields.boat_state = kBoatAnchored;
 			}
 			// Collision detected or insufficient depth -> error
 			else if (system_information.fields.collision_detected || system_information.fields.depth_too_low)
 			{
 				LOG("idle -> error\n");
-				system_information.fields.boat_state = kBoatError;
 				stopMotors(&system_information);
+				system_information.fields.boat_state = kBoatError;
 				// TODO: disable command processor here
 			}
 			//  Motors are active and have nonzero duty cycle -> driving
@@ -1479,14 +1480,15 @@ void StartTaskBoatSM(void *argument)
 			if (system_information.fields.collision_detected || system_information.fields.depth_too_low)
 			{
 				LOG("driving -> error\n");
-				system_information.fields.boat_state = kBoatError;
 				stopMotors(&system_information);
+				system_information.fields.boat_state = kBoatError;
 				// TODO: disable command processor here
 			}
 			// All motors idle -> idle
 			else if (are_all_motors_idle(&system_information))
 			{
 				LOG("driving -> idle\n");
+				stopMotors(&system_information);
 				system_information.fields.boat_state = kBoatIdle;
 			}
 			else
@@ -1521,7 +1523,7 @@ void StartTaskBoatSM(void *argument)
 				}
 				else if (cmd.fields.cmd.state.state == kSpareMotorRequest)
 				{
-
+				  activate_spare_motor(&system_information);
 				}
 			}
 			break;
