@@ -18,7 +18,7 @@ class JoystickWidget(QWidget):
         self._current_position: QRectF
         self._is_active: bool = False
         self._input: int = 0
-        
+                
         self.update_joystick()
         
     def update_view(self): 

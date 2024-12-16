@@ -25,7 +25,7 @@ class BoatController:
         self._kv = 1.0
         
         self._state = BoatState.BOAT_IDLE
-        self._motor_states = [MotorState(False, False, False) for _ in range(5)]
+        self._motor_states = [MotorState(False, False, False, MotorType.NULL) for _ in range(5)]
         self._ts = 0
         self._roll = 0.0
         self._pitch = 0.0

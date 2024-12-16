@@ -2,7 +2,7 @@ import asyncio
 import struct
 import numpy as np
 import queue
-import time
+
 from bleak import (
     BleakScanner, 
     BleakClient
@@ -37,8 +37,10 @@ class Direction(IntEnum):
         return Direction(u2 - 1)
     
 class MotorType(IntEnum):
+    NULL = -1 
     STEERING = 0
-    THRUST = 1    
+    THRUST = 1
+    SPARE = 2
     
 @dataclass
 class MotorState:
@@ -74,6 +76,7 @@ class BoatRequestedCommand(IntEnum):
     RECOVERY_REQUEST = 0
     ANCHOR_BOAT = 1
     LIFT_ANCHOR = 2
+    SWAP_MOTOR = 3
 
 class MotorboatBLEListener:
     def __init__(self, device_name: str, service_desc: str, tx_property: str, rx_property: str, address: str = None):

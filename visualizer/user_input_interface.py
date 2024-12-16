@@ -79,10 +79,13 @@ class UserInputWidget(QWidget):
         self._remove_anchor.pressed.connect(self._remove_anchor_boat_command)
         self._recover_from_error = QPushButton("Recover from error")
         self._recover_from_error.pressed.connect(self._recover_from_error_boat_command)
+        self._swap_motor = QPushButton("Swap motor")
+        self._swap_motor.pressed.connect(self._swap_motor_boat_command)
         
         self.layout().addWidget(self._anchor_button, 1, 0, 1, 5)
         self.layout().addWidget(self._remove_anchor, 2, 0, 1, 5)
         self.layout().addWidget(self._recover_from_error, 3, 0, 1, 5)
+        self.layout().addWidget(self._swap_motor, 4, 0, 1, 5)
         
         self._timer: QTimer = None
         
@@ -101,6 +104,12 @@ class UserInputWidget(QWidget):
     def _recover_from_error_boat_command(self):
         if not self._controller._ble_comms.send_boat_request(
             BoatRequestedCommand.RECOVERY_REQUEST
+        ):
+            print("Failed to send command")
+            
+    def _swap_motor_boat_command(self):
+        if not self._controller._ble_comms.send_boat_request(
+            BoatRequestedCommand.SWAP_MOTOR
         ):
             print("Failed to send command")
         
