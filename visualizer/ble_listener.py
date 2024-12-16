@@ -36,11 +36,16 @@ class Direction(IntEnum):
     def from_u2(u2: int) -> "Direction":
         return Direction(u2 - 1)
     
+class MotorType(IntEnum):
+    STEERING = 0
+    THRUST = 1    
+    
 @dataclass
 class MotorState:
     is_active: bool
     is_alive: bool
     is_idle: bool
+    motor_type: MotorType
 
 @dataclass
 class MotorStatus:
