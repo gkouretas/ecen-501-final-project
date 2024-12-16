@@ -124,10 +124,10 @@ typedef union {
 		  bool collision_detected: 1;
 		  bool depth_too_low: 1;
 		  uint8_t reserved : 4; // for alignment                       // 1 byte
-		  uint16_t depth_mm: 16;                                           // 2 bytes
-		  int8_t tilt_roll: 8;                                            // 1 byte
-		  int8_t tilt_pitch: 8;                                           // 1 byte
-		  uint32_t tick: 32;                                               // 4 bytes
+		  uint16_t depth_mm: 16;                                       // 2 bytes
+		  int8_t tilt_roll: 8;                                         // 1 byte
+		  int8_t tilt_pitch: 8;                                        // 1 byte
+		  uint32_t tick: 32;                                           // 4 bytes
 		  MotorStatus_t motor_statuses[NUM_MOTORS + NUM_SPARE_MOTORS]; // 10 bytes
 		  uint8_t temperature;                                           // 1 byte
 	} fields;
@@ -147,14 +147,15 @@ typedef union {
 
 #define TIMER_PERIOD_STATE_MACHINE 100 // ms
 #define TIMER_PERIOD_READ_SENSORS 100 // ms
-#define TIMER_PERIOD_TIMEOUT 100 // ms
+#define TIMER_PERIOD_TIMEOUT 500 // ms
 
 #define MOTOR_FAILURE_CHANCE 20.0f // percent chance of motor failure from collision
 #define MOTOR_TIMEOUT_INTERVAL 2000 // motor idle timeount in ms
 
 #define DEPTH_RANGE_MAXIMUM_MM                500 // 500mm
-#define ACCEL_SAMPLING_RATE                   100 // 10 Hz
-#define BLE_TRANSMISSION_RATE                 100 // 10 Hz. TODO: increase as high as we can...
+#define ACCEL_SAMPLING_RATE                   250 // 4 Hz
+#define DEPTH_SAMPLING_RATE                   1000 // 1 Hz
+#define BLE_TRANSMISSION_RATE                 50  // 20 Hz. TODO: increase as high as we can...
 #define MAX_REPORTED_TILT_DEG                 120 // within u8
 
 #define COMMAND_MSG_QUEUE_PRI                 (10)
@@ -164,7 +165,7 @@ typedef union {
 
 #define PWM_MAX_VALUE                         (100)
 
-#define ENABLE_DEBUG_OUTPUT                   (false)
+#define ENABLE_DEBUG_OUTPUT                   (true)
 
 #if ENABLE_DEBUG_OUTPUT == true
 #define LOG(...) printf(__VA_ARGS__)
@@ -1423,11 +1424,13 @@ void StartTaskBoatSM(void *argument)
 			// User sends anchor request -> anchored
 			if (received_cmd && cmd.fields.cmd.state.state == kAnchorBoatRequest)
 			{
+				LOG("idle -> anchored\n");
 				system_information.fields.boat_state = kBoatAnchored;
 			}
 			// Collision detected or insufficient depth -> error
 			else if (system_information.fields.collision_detected || system_information.fields.depth_too_low)
 			{
+				LOG("idle -> error\n");
 				system_information.fields.boat_state = kBoatError;
 				stopMotors(&system_information);
 				// TODO: disable command processor here
@@ -1435,6 +1438,7 @@ void StartTaskBoatSM(void *argument)
 			//  Motors are active and have nonzero duty cycle -> driving
 			else if (are_motors_moving(&system_information))
 			{
+				LOG("idle -> driving\n");
 				system_information.fields.boat_state = kBoatDriving;
 				updateMotorDutyCycle(&system_information);
 				// TODO: unblock command processor here
@@ -1444,6 +1448,7 @@ void StartTaskBoatSM(void *argument)
 			// Collision detected or insufficient depth -> error
 			if (system_information.fields.collision_detected || system_information.fields.depth_too_low)
 			{
+				LOG("driving -> error\n");
 				system_information.fields.boat_state = kBoatError;
 				stopMotors(&system_information);
 				// TODO: disable command processor here
@@ -1451,6 +1456,7 @@ void StartTaskBoatSM(void *argument)
 			// All motors idle -> idle
 			else if (are_all_motors_idle(&system_information))
 			{
+				LOG("driving -> idle\n");
 				system_information.fields.boat_state = kBoatIdle;
 			}
 			else
@@ -1460,18 +1466,20 @@ void StartTaskBoatSM(void *argument)
 			break;
 		case kBoatAnchored:
 			// User sends lift anchor request -> idle
-			if (cmd.fields.cmd.state.state == kLiftAnchorRequest)
+			if (received_cmd && cmd.fields.cmd.state.state == kLiftAnchorRequest)
 			{
+				LOG("anchored -> idle\n");
 				system_information.fields.boat_state = kBoatIdle;
 			}
 			break;
 		case kBoatError:
 			// User sends recovery request -> idle
-			if (cmd.fields.cmd.state.state == kRecoveryRequest)
+			if (received_cmd && cmd.fields.cmd.state.state == kRecoveryRequest)
 			{
 				// Request to recover from the error
 				if (!system_information.fields.depth_too_low)
 				{
+					LOG("error -> idle\n");
 					// Clear error
 					system_information.fields.collision_detected = false;
 
@@ -1497,9 +1505,11 @@ void StartTaskDepthDetect(void *argument)
 {
   /* USER CODE BEGIN StartTaskDepthDetect */
   uint16_t range;
+  uint32_t tick = osKernelGetTickCount();
   /* Infinite loop */
   for(;;)
   {
+	  tick += DEPTH_SAMPLING_RATE;
 	  if (vl53l0x_prepare_sample(tof_intf) != HAL_OK)
 	  {
 		  LOG("Failed to prepare range sample\n");
@@ -1516,10 +1526,12 @@ void StartTaskDepthDetect(void *argument)
 	  }
 
 	  osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
-	  LOG("Depth: %d\n", range);
+//	  LOG("Depth: %d\n", range);
 	  system_information.fields.depth_mm = range;
 	  system_information.fields.depth_too_low = range < DEPTH_RANGE_MAXIMUM_MM;
 	  osMutexRelease(mutexSystemInfoHandle);
+
+	  osDelayUntil(tick);
   }
   /* USER CODE END StartTaskDepthDetect */
 }
@@ -1706,6 +1718,7 @@ void startCollisionDetectTask(void *argument)
 
 		// Set collision flag
 		osMutexAcquire(mutexSystemInfoHandle, osWaitForever);
+    LOG("collision detected\n");
 		system_information.fields.collision_detected = true;
 
 		// Determine if collision caused motor failure

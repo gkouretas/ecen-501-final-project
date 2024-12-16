@@ -17,7 +17,6 @@ class JoystickWidget(QWidget):
         self._joystick_position = QPointF(0.0, 0.0)
         self._current_position: QRectF
         self._is_active: bool = False
-        self._timer: QTimer = None
         self._input: int = 0
         
         self.update_joystick()
